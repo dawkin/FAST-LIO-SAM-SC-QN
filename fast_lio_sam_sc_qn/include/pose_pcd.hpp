@@ -13,22 +13,22 @@ struct PosePcd
     int idx_;
     bool processed_ = false;
     PosePcd() {}
-    PosePcd(const nav_msgs::Odometry &odom_in,
-            const sensor_msgs::PointCloud2 &pcd_in,
+    PosePcd(const nav_msgs::msg::Odometry &odom_in,
+            const sensor_msgs::msg::PointCloud2 &pcd_in,
             const int &idx_in);
 };
 
-inline PosePcd::PosePcd(const nav_msgs::Odometry &odom_in,
-                        const sensor_msgs::PointCloud2 &pcd_in,
+inline PosePcd::PosePcd(const nav_msgs::msg::Odometry &odom_in,
+                        const sensor_msgs::msg::PointCloud2 &pcd_in,
                         const int &idx_in)
 {
-    tf::Quaternion q(odom_in.pose.pose.orientation.x,
+    tf2::Quaternion q(odom_in.pose.pose.orientation.x,
                      odom_in.pose.pose.orientation.y,
                      odom_in.pose.pose.orientation.z,
                      odom_in.pose.pose.orientation.w);
-    tf::Matrix3x3 rot_mat_tf(q);
+    tf2::Matrix3x3 rot_mat_tf(q);
     Eigen::Matrix3d rot_mat_eig;
-    tf::matrixTFToEigen(rot_mat_tf, rot_mat_eig);
+    matrixTFToEigen(rot_mat_tf, rot_mat_eig);
     pose_eig_.block<3, 3>(0, 0) = rot_mat_eig;
     pose_eig_(0, 3) = odom_in.pose.pose.position.x;
     pose_eig_(1, 3) = odom_in.pose.pose.position.y;
@@ -38,7 +38,7 @@ inline PosePcd::PosePcd(const nav_msgs::Odometry &odom_in,
     pcl::fromROSMsg(pcd_in, tmp_pcd);
     pcd_ = transformPcd(tmp_pcd, pose_eig_.inverse()); // FAST-LIO publish data in world frame,
                                                        // so save it in LiDAR frame
-    timestamp_ = odom_in.header.stamp.toSec();
+    timestamp_ = toSec(odom_in.header.stamp);
     idx_ = idx_in;
 }
 

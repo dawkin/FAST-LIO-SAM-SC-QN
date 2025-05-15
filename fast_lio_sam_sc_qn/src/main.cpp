@@ -2,16 +2,17 @@
 
 int main(int argc, char **argv)
 {
-    ros::init(argc, argv, "fast_lio_sam_sc_qn_node");
-    ros::NodeHandle nh_private("~");
+    rclcpp::init(argc, argv);
+    auto node = std::make_shared<FastLioSamScQn>();
 
-    FastLioSamScQn fast_lio_sam_sc_qn_(nh_private);
+    rclcpp::executors::MultiThreadedExecutor executor;
+    executor.add_node(node);
 
-    ros::AsyncSpinner spinner(4); // Use multi threads
-    spinner.start();
-    ros::waitForShutdown();
+    // Spin the node until shutdown
+    executor.spin();
 
-    fast_lio_sam_sc_qn_.~FastLioSamScQn(); // Explicit call of destructor
+    // Shutdown ROS2
+    rclcpp::shutdown();
 
     return 0;
 }
