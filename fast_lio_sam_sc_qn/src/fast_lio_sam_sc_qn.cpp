@@ -4,51 +4,62 @@ FastLioSamScQn::FastLioSamScQn():
     Node("FastLioSamScQn"), tfListener_buffer_(this->get_clock()),
     broadcaster_(*this), tfListener_(tfListener_buffer_)
 {
+
+    RCLCPP_INFO(this->get_logger(), "Main class, loading params node...");
     ////// ROS params
     double loop_update_hz, vis_hz;
     LoopClosureConfig lc_config;
     auto &gc = lc_config.gicp_config_;
     auto &qc = lc_config.quatro_config_;
     /* basic */
-    this->declare_parameter("/basic/map_frame", map_frame_);
-    this->declare_parameter("/basic/loop_update_hz", loop_update_hz);
-    this->declare_parameter("/basic/vis_hz", vis_hz);
-    this->declare_parameter("/save_voxel_resolution", voxel_res_);
-    this->declare_parameter("/quatro_nano_gicp_voxel_resolution", lc_config.voxel_res_);
+    this->declare_parameter("basic.map_frame", map_frame_);
+    this->declare_parameter("basic.loop_update_hz", loop_update_hz);
+    this->declare_parameter("basic.vis_hz", vis_hz);
+    this->declare_parameter("save_voxel_resolution", voxel_res_);
+    this->declare_parameter("quatro_nano_gicp_voxel_resolution",lc_config.voxel_res_);
     /* keyframe */
-    this->declare_parameter("/keyframe/keyframe_threshold", keyframe_thr_);
-    this->declare_parameter("/keyframe/nusubmap_keyframes", lc_config.num_submap_keyframes_);
-    this->declare_parameter("/keyframe/enable_submap_matching", lc_config.enable_submap_matching_);
+    this->declare_parameter("keyframe.keyframe_threshold", keyframe_thr_);
+    this->declare_parameter("keyframe.nusubmap_keyframes", lc_config.num_submap_keyframes_);
+    this->declare_parameter("keyframe.enable_submap_matching", lc_config.enable_submap_matching_);
     /* ScanContext */
-    this->declare_parameter("/scancontext_max_correspondence_distance",
-                      lc_config.scancontext_max_correspondence_distance_);
+    this->declare_parameter("scancontext_max_correspondence_distance", lc_config.scancontext_max_correspondence_distance_);
     /* nano (GICP config) */
-    this->declare_parameter("/nano_gicp/thread_number", gc.nano_thread_number_);
-    this->declare_parameter("/nano_gicp/icp_score_threshold", gc.icp_score_thr_);
-    this->declare_parameter("/nano_gicp/correspondences_number", gc.nano_correspondences_number_);
-    this->declare_parameter("/nano_gicp/max_correspondence_distance", gc.max_corr_dist_);
-    this->declare_parameter("/nano_gicp/max_iter", gc.nano_max_iter_);
-    this->declare_parameter("/nano_gicp/transformation_epsilon", gc.transformation_epsilon_);
-    this->declare_parameter("/nano_gicp/euclidean_fitness_epsilon", gc.euclidean_fitness_epsilon_);
-    this->declare_parameter("/nano_gicp/ransac/max_iter", gc.nano_ransac_max_iter_);
-    this->declare_parameter("/nano_gicp/ransac/outlier_rejection_threshold", gc.ransac_outlier_rejection_threshold_);
+    this->declare_parameter("nano_gicp.thread_number", gc.nano_thread_number_);
+    this->declare_parameter("nano_gicp.icp_score_threshold", gc.icp_score_thr_);
+    this->declare_parameter("nano_gicp.correspondences_number",
+                            gc.nano_correspondences_number_);
+    this->declare_parameter("nano_gicp.max_iter", gc.nano_max_iter_);
+    this->declare_parameter("nano_gicp.transformation_epsilon",
+                            gc.transformation_epsilon_);
+    this->declare_parameter("nano_gicp.euclidean_fitness_epsilon",
+                            gc.euclidean_fitness_epsilon_);
+    this->declare_parameter("nano_gicp.ransac.max_iter",
+                            gc.nano_ransac_max_iter_);
+    this->declare_parameter("nano_gicp.ransac.outlier_rejection_threshold",
+                            gc.ransac_outlier_rejection_threshold_);
     /* quatro (Quatro config) */
-    this->declare_parameter("/quatro/enable", lc_config.enable_quatro_);
-    this->declare_parameter("/quatro/optimize_matching", qc.use_optimized_matching_);
-    this->declare_parameter("/quatro/distance_threshold", qc.quatro_distance_threshold_);
-    this->declare_parameter("/quatro/max_nucorrespondences", qc.quatro_max_num_corres_);
-    this->declare_parameter("/quatro/fpfh_normal_radius", qc.fpfh_normal_radius_);
-    this->declare_parameter("/quatro/fpfh_radius", qc.fpfh_radius_);
-    this->declare_parameter("/quatro/estimating_scale", qc.estimat_scale_);
-    this->declare_parameter("/quatro/noise_bound", qc.noise_bound_);
-    this->declare_parameter("/quatro/rotation/gnc_factor", qc.rot_gnc_factor_);
-    this->declare_parameter("/quatro/rotation/rot_cost_diff_threshold", qc.rot_cost_diff_thr_);
-    this->declare_parameter("/quatro/rotation/numax_iter", qc.quatro_max_iter_);
+    this->declare_parameter("quatro.enable", lc_config.enable_quatro_);
+    this->declare_parameter("quatro.optimize_matching",
+                            qc.use_optimized_matching_);
+    this->declare_parameter("quatro.distance_threshold",
+                            qc.quatro_distance_threshold_);
+    this->declare_parameter("quatro.max_nucorrespondences",
+                            qc.quatro_max_num_corres_);
+    this->declare_parameter("quatro.fpfh_normal_radius",
+                            qc.fpfh_normal_radius_);
+    this->declare_parameter("quatro.fpfh_radius", qc.fpfh_radius_);
+    this->declare_parameter("quatro.estimating_scale", qc.estimat_scale_);
+    this->declare_parameter("quatro.noise_bound", qc.noise_bound_);
+    this->declare_parameter("quatro.rotation.gnc_factor", qc.rot_gnc_factor_);
+    this->declare_parameter("quatro.rotation.rot_cost_diff_threshold",
+                            qc.rot_cost_diff_thr_);
+    this->declare_parameter("quatro.rotation.numax_iter", qc.quatro_max_iter_);
     /* results */
-    this->declare_parameter("/result/save_map_bag", save_map_bag_);
-    this->declare_parameter("/result/save_map_pcd", save_map_pcd_);
-    this->declare_parameter("/result/save_in_kitti_format", save_in_kitti_format_);
-    this->declare_parameter("/result/seq_name", seq_name_);
+    this->declare_parameter("result.save_map_bag", save_map_bag_);
+    this->declare_parameter("result.save_map_pcd", save_map_pcd_);
+    this->declare_parameter("result.save_in_kitti_format",
+                            save_in_kitti_format_);
+    this->declare_parameter("result.seq_name", seq_name_);
 
     /* basic */
     GET_PARAM_DEBUG("basic.map_frame", map_frame_);
@@ -62,6 +73,9 @@ FastLioSamScQn::FastLioSamScQn():
                     lc_config.num_submap_keyframes_);
     GET_PARAM_DEBUG("keyframe.enable_submap_matching",
                     lc_config.enable_submap_matching_);
+
+    /* ScanContext */
+    GET_PARAM_DEBUG("scancontext_max_correspondence_distance", lc_config.scancontext_max_correspondence_distance_);
 
     /* nano (GICP config) */
     GET_PARAM_DEBUG("nano_gicp.thread_number", gc.nano_thread_number_);
@@ -142,15 +156,8 @@ FastLioSamScQn::FastLioSamScQn():
         std::bind(&FastLioSamScQn::saveFlagCallback, this,
                   std::placeholders::_1));
     /* Timers */
-    loop_timer_ = rclcpp::create_timer(
-        this, this->get_clock(),
-        rclcpp::Duration(std::chrono::duration<double>(1 / loop_update_hz)),
-        std::bind(&FastLioSamScQn::loopTimerFunc, this));
-
-    vis_timer_ = rclcpp::create_timer(
-        this, this->get_clock(),
-        rclcpp::Duration(std::chrono::duration<double>(1 / vis_hz)),
-        std::bind(&FastLioSamScQn::visTimerFunc, this));
+    loop_timer_ = this->create_wall_timer(500ms, std::bind(&FastLioSamScQn::loopTimerFunc, this));
+    vis_timer_ = this->create_wall_timer(500ms, std::bind(&FastLioSamScQn::visTimerFunc, this));
 
     RCLCPP_INFO(this->get_logger(), "Main class, starting node...");
 }
@@ -407,8 +414,10 @@ void FastLioSamScQn::visTimerFunc()
         global_map_vis_switch_ = true;
     }
     high_resolution_clock::time_point tv2 = high_resolution_clock::now();
-    RCLCPP_INFO(this->get_logger(), "vis: %.1fms",
-                duration_cast<microseconds>(tv2 - tv1).count() / 1e3);
+
+    // Not used Log
+    // RCLCPP_INFO(this->get_logger(), "vis: %.1fms",
+    //            duration_cast<microseconds>(tv2 - tv1).count() / 1e3);
     return;
 }
 
@@ -534,7 +543,7 @@ void FastLioSamScQn::saveFlagCallback(const std_msgs::msg::String::ConstSharedPt
 FastLioSamScQn::~FastLioSamScQn()
 {
 
-    RCLCPP_INFO(this->get_logger(), "FastLioSam Exit and Saving...");
+    RCLCPP_INFO(this->get_logger(), "FastLioSamScQn Exit and Saving...");
     // save map
     if (save_map_bag_)
     {
