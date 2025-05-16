@@ -1,9 +1,9 @@
 [submodule "third_party/Quatro"]
 	path = third_party/Quatro
-	url = https://github.com/engcang/Quatro
+	url = https://github.com/dawkin/Quatro
 [submodule "third_party/nano_gicp"]
 	path = third_party/nano_gicp
-	url = https://github.com/engcang/nano_gicp
+	url = https://github.com/dawkin/nano_gicp
 [submodule "third_party/scancontext_tro"]
 	path = third_party/scancontext_tro
 	url = https://github.com/engcang/scancontext_tro
