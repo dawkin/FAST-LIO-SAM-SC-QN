@@ -113,6 +113,7 @@ private:
     bool global_map_vis_switch_ = true;
     ///// results
     bool save_map_bag_ = false, save_map_pcd_ = false, save_in_kitti_format_ = false;
+    std::string save_map_path_ = ROOT_DIR;
     ///// ros
     rclcpp::Publisher<PointCloudT>::SharedPtr odom_pub_;
     rclcpp::Publisher<PathT>::SharedPtr path_pub_;
