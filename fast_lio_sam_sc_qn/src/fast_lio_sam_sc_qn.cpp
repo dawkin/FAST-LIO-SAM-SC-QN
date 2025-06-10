@@ -482,47 +482,6 @@ void FastLioSamScQn::saveFlagCallback(const std_msgs::msg::String::ConstSharedPt
             "\033[32;1mScans and poses saved in .pcd and KITTI format\033[0m");
     }
 
-    if (save_map_bag_)
-    {
-        std::unique_ptr<rosbag2_cpp::Writer> writer;
-        writer = std::make_unique<rosbag2_cpp::Writer>();
-        
-        rosbag2_storage::StorageOptions write_storage_options{};
-        write_storage_options.uri = package_path_ + "/result.bag";
-        write_storage_options.storage_id = "sqlite3";
-        rosbag2_cpp::ConverterOptions converter_options{};
-        converter_options.input_serialization_format = "cdr";
-        converter_options.output_serialization_format = "cdr";
-        writer->open(write_storage_options, converter_options);
-
-        rosbag2_storage::TopicMetadata keyframe_pcd_topic_metadata;
-        keyframe_pcd_topic_metadata.name =  "/keyframe_pcd";
-        keyframe_pcd_topic_metadata.type =  "sensor_msgs/msg/PointCloud2";
-        keyframe_pcd_topic_metadata.serialization_format = "cdr";
-
-        rosbag2_storage::TopicMetadata keyframe_pose_topic_metadata;
-        keyframe_pose_topic_metadata.name =  "/keyframe_pose";
-        keyframe_pose_topic_metadata.type =  "geometry_msgs/msg/PoseStamped";
-        keyframe_pose_topic_metadata.serialization_format = "cdr";
-
-        writer->create_topic(keyframe_pcd_topic_metadata);
-        writer->create_topic(keyframe_pose_topic_metadata);
-
-        {
-            std::lock_guard<std::mutex> lock(keyframes_mutex_);
-            for (size_t i = 0; i < keyframes_.size(); ++i) {
-            rclcpp::Time time = fromSec(keyframes_[i].timestamp_);
-            writer->write(pclToPclRos(keyframes_[i].pcd_, map_frame_),
-                        "/keyframe_pcd", time);
-            writer->write(poseEigToPoseStamped(keyframes_[i].pose_corrected_eig_),
-                        "/keyframe_pose", time);
-            }
-        }
-
-        writer->close();
-        RCLCPP_INFO(this->get_logger(), "\033[36;1mResult saved in .bag format!!!\033[0m");
-    }
-
     if (save_map_pcd_)
     {
         pcl::PointCloud<PointType>::Ptr corrected_map(new pcl::PointCloud<PointType>());
@@ -553,32 +512,24 @@ FastLioSamScQn::~FastLioSamScQn()
         writer = std::make_unique<rosbag2_cpp::Writer>();
         
         rosbag2_storage::StorageOptions write_storage_options{};
-        write_storage_options.uri = package_path_ + "/result.bag";
+        write_storage_options.uri = save_map_path_ + "pose_result";
         write_storage_options.storage_id = "sqlite3";
         rosbag2_cpp::ConverterOptions converter_options{};
         converter_options.input_serialization_format = "cdr";
         converter_options.output_serialization_format = "cdr";
         writer->open(write_storage_options, converter_options);
 
-        rosbag2_storage::TopicMetadata keyframe_pcd_topic_metadata;
-        keyframe_pcd_topic_metadata.name =  "/keyframe_pcd";
-        keyframe_pcd_topic_metadata.type =  "sensor_msgs/msg/PointCloud2";
-        keyframe_pcd_topic_metadata.serialization_format = "cdr";
-
         rosbag2_storage::TopicMetadata keyframe_pose_topic_metadata;
         keyframe_pose_topic_metadata.name =  "/keyframe_pose";
         keyframe_pose_topic_metadata.type =  "geometry_msgs/msg/PoseStamped";
         keyframe_pose_topic_metadata.serialization_format = "cdr";
 
-        writer->create_topic(keyframe_pcd_topic_metadata);
         writer->create_topic(keyframe_pose_topic_metadata);
 
         {
             std::lock_guard<std::mutex> lock(keyframes_mutex_);
             for (size_t i = 0; i < keyframes_.size(); ++i) {
             rclcpp::Time time = fromSec(keyframes_[i].timestamp_);
-            writer->write(pclToPclRos(keyframes_[i].pcd_, map_frame_),
-                        "/keyframe_pcd", time);
             writer->write(poseEigToPoseStamped(keyframes_[i].pose_corrected_eig_),
                         "/keyframe_pose", time);
             }
