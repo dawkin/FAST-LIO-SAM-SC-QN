@@ -32,8 +32,8 @@
 #include <gtsam/nonlinear/LevenbergMarquardtOptimizer.h>
 #include <gtsam/nonlinear/Values.h>
 #include <gtsam/nonlinear/ISAM2.h>
-
-using PointType = pcl::PointXYZI;
+///// fast_lio
+#include <fast_lio/common_lib.h>
 
 double inline toSec(const rclcpp::Time &timestamp) {
     return static_cast<double>(timestamp.seconds()) +

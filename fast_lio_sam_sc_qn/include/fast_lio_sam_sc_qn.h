@@ -34,6 +34,7 @@
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_broadcaster.h>
 #include <tf2_ros/transform_listener.h>
+#include <tf2_ros/static_transform_broadcaster.h>
 #include <std_msgs/msg/string.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <visualization_msgs/msg/marker.hpp>
@@ -54,6 +55,9 @@
 #include "loop_closure.h"
 #include "pose_pcd.hpp"
 #include "utilities.hpp"
+///// fast_lio
+#include <fast_lio/FastLioCore.h>
+#include "livox_ros_driver2/msg/custom_msg.hpp"
 
 #ifdef FASTLIO_SAM_QN_PARAM_DEBUG
 #define GET_PARAM_DEBUG(name, param)                                           \
@@ -105,9 +109,8 @@ private:
     int sub_key_num_;
     std::vector<std::pair<size_t, size_t>> loop_idx_pairs_; // for vis
     ///// visualize
-    tf2_ros::Buffer tfListener_buffer_;
-    tf2_ros::TransformBroadcaster broadcaster_;
-    tf2_ros::TransformListener tfListener_;
+    std::unique_ptr<tf2_ros::TransformBroadcaster> broadcaster_;
+    std::unique_ptr<tf2_ros::StaticTransformBroadcaster> static_tf_broadcaster_;
     pcl::PointCloud<pcl::PointXYZ> odoms_, corrected_odoms_;
     nav_msgs::msg::Path odom_path_, corrected_path_;
     bool global_map_vis_switch_ = true;
@@ -127,6 +130,7 @@ private:
     rclcpp::Publisher<PointCloudT>::SharedPtr debug_dst_pub_;
     rclcpp::Publisher<PointCloudT>::SharedPtr debug_coarse_aligned_pub_;
     rclcpp::Publisher<PointCloudT>::SharedPtr debug_fine_aligned_pub_;
+    rclcpp::Publisher<rosgraph_msgs::msg::Clock>::SharedPtr clock_pub_;
 
     rclcpp::Subscription<StringT>::SharedPtr sub_save_flag_;
 
@@ -140,6 +144,13 @@ private:
         sub_pcd_ = nullptr;
     ///// Loop closure
     std::shared_ptr<LoopClosure> loop_closure_;
+    ///// Offline Mode
+    std::unique_ptr<FastLioCore> fast_lio_core_;
+    std::string bag_file_;
+    std::string fast_lio_config_;
+    bool offline_post_loop_optimization_ = false;
+    bool offline_buffered_read_ = true;
+    double bag_buffer_time_sec_ = 2.0;
 
 public:
     explicit FastLioSamScQn();
@@ -147,6 +158,7 @@ public:
 
 private:
     // methods
+    void initPublishersAndSubscribers();
     void updateOdomsAndPaths(const PosePcd &pose_pcd_in);
     bool checkIfKeyframe(const PosePcd &pose_pcd_in, const PosePcd &latest_pose_pcd);
     visualization_msgs::msg::Marker getLoopMarkers(const gtsam::Values &corrected_esti_in);
@@ -156,6 +168,9 @@ private:
     void saveFlagCallback(const std_msgs::msg::String::ConstSharedPtr &msg);
     void loopTimerFunc();
     void visTimerFunc();
+    // offline
+    void runOffline();
+    void performLoopClosureForKf(size_t keyframe_idx);
 };
 
 

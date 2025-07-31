@@ -53,3 +53,10 @@ fast_lio_sam_sc_qn_node:
       yaml_file_name_bkp: "latest_lidar_pose_bkp.yaml"
       bkp_dt: 2 # Backup to be taken once in bkp_dt messages
       map_publish_freq: 10  # For every map_publish_freq calls to visTimercallback, map will be published once
+
+    offline:
+      bag_file: ""
+      fast_lio_config: "mid360.yaml"
+      post_loop_optimization: false
+      buffered_read: true
+      buffer_time_sec: 2.0
