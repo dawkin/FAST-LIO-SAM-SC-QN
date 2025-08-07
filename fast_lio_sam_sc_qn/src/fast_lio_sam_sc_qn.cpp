@@ -997,39 +997,54 @@ FastLioSamScQn::~FastLioSamScQn()
 {
 
     RCLCPP_INFO(this->get_logger(), "FastLioSamScQn Exit and Saving...");
-    // save map
+
     if (save_map_bag_)
     {
-        std::unique_ptr<rosbag2_cpp::Writer> writer;
-        writer = std::make_unique<rosbag2_cpp::Writer>();
-        
-        rosbag2_storage::StorageOptions write_storage_options{};
-        write_storage_options.uri = save_map_path_ + "pose_result";
-        write_storage_options.storage_id = "sqlite3";
-        rosbag2_cpp::ConverterOptions converter_options{};
-        converter_options.input_serialization_format = "cdr";
-        converter_options.output_serialization_format = "cdr";
-        writer->open(write_storage_options, converter_options);
+        auto writer = std::make_unique<rosbag2_cpp::Writer>();
+        try {
+            writer->open(save_map_path_ + "map_bag");
+        } catch (const std::exception& e) {
+            RCLCPP_ERROR(this->get_logger(), "Failed to open bag file for writing: %s", e.what());
+            return;
+        }
 
-        rosbag2_storage::TopicMetadata keyframe_pose_topic_metadata;
-        keyframe_pose_topic_metadata.name =  "/keyframe_pose";
-        keyframe_pose_topic_metadata.type =  "geometry_msgs/msg/PoseStamped";
-        keyframe_pose_topic_metadata.serialization_format = "cdr";
+        const std::string pose_topic_name = "/keyframe_pose";
+        rosbag2_storage::TopicMetadata pose_topic_metadata;
+        pose_topic_metadata.name = pose_topic_name;
+        pose_topic_metadata.type = "geometry_msgs/msg/PoseStamped";
+        pose_topic_metadata.serialization_format = rmw_get_serialization_format();
+        writer->create_topic(pose_topic_metadata);
 
-        writer->create_topic(keyframe_pose_topic_metadata);
+        const std::string pcd_topic_name = "/keyframe_pcd";
+        rosbag2_storage::TopicMetadata pcd_topic_metadata;
+        pcd_topic_metadata.name = pcd_topic_name;
+        pcd_topic_metadata.type = "sensor_msgs/msg/PointCloud2";
+        pcd_topic_metadata.serialization_format = rmw_get_serialization_format();
+        writer->create_topic(pcd_topic_metadata);
 
         {
             std::lock_guard<std::mutex> lock(keyframes_mutex_);
-            for (size_t i = 0; i < keyframes_.size(); ++i) {
-            rclcpp::Time time = fromSec(keyframes_[i].timestamp_);
-            writer->write(poseEigToPoseStamped(keyframes_[i].pose_corrected_eig_),
-                        "/keyframe_pose", time);
+            for (const auto& keyframe : keyframes_) {
+                rclcpp::Time time = fromSec(keyframe.timestamp_);
+
+                auto pose_msg = std::make_shared<geometry_msgs::msg::PoseStamped>(
+                    poseEigToPoseStamped(keyframe.pose_corrected_eig_, map_frame_)
+                );
+                pose_msg->header.stamp = time;
+                writer->write(*pose_msg, pose_topic_name, time);
+
+                auto pcd_msg = std::make_shared<sensor_msgs::msg::PointCloud2>(
+                    pclToPclRos(keyframe.pcd_, map_frame_)
+                );
+                pcd_msg->header.stamp = time;
+                writer->write(*pcd_msg, pcd_topic_name, time);
             }
         }
 
         writer->close();
         RCLCPP_INFO(this->get_logger(), "\033[36;1mResult saved in .bag format!!!\033[0m");
     }
+
     if (save_map_pcd_)
     {
         pcl::PointCloud<PointType>::Ptr corrected_map(new pcl::PointCloud<PointType>());

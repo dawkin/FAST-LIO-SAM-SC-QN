@@ -30,6 +30,7 @@
   <depend>std_srvs</depend>
   <depend>fast_lio</depend>
   <depend>livox_ros_driver2</depend>
+  <depend>rosidl_default_runtime</depend>
   <build_depend>cv_bridge</build_depend>
 
   <export>

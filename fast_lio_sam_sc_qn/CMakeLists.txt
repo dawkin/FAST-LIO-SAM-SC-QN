@@ -52,6 +52,7 @@ find_package(cv_bridge REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(fast_lio REQUIRED)
 find_package(livox_ros_driver2 REQUIRED)
+find_package(rosidl_default_runtime REQUIRED)
 
 if(PCL_FOUND)
   message(WARNING "PCL_VER: ${PCL_VERSION}, and PCL_DIR: ${PCL_INCLUDE_DIRS}")
