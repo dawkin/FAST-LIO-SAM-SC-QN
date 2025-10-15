@@ -13,6 +13,7 @@ FastLioSamScQn::FastLioSamScQn(): Node("FastLioSamScQn")
     auto &qc = lc_config.quatro_config_;
     /* basic */
     this->declare_parameter("basic.map_frame", map_frame_);
+    this->declare_parameter("basic.robot_frame", robot_frame_);
     this->declare_parameter("basic.loop_update_hz", loop_update_hz);
     this->declare_parameter("basic.vis_hz", vis_hz);
     this->declare_parameter("save_voxel_resolution", voxel_res_);
@@ -70,6 +71,7 @@ FastLioSamScQn::FastLioSamScQn(): Node("FastLioSamScQn")
 
     /* basic */
     GET_PARAM_DEBUG("basic.map_frame", map_frame_);
+    GET_PARAM_DEBUG("basic.robot_frame", robot_frame_);
     GET_PARAM_DEBUG("basic.loop_update_hz", loop_update_hz);
     GET_PARAM_DEBUG("basic.vis_hz", vis_hz);
     GET_PARAM_DEBUG("save_voxel_resolution", voxel_res_);
@@ -704,7 +706,7 @@ void FastLioSamScQn::odomPcdCallback(const nav_msgs::msg::Odometry::ConstSharedP
         trans_stamped_msg_.transform =
             tf2::toMsg(poseEigToROSTf(current_frame_.pose_corrected_eig_));
         trans_stamped_msg_.header.frame_id = map_frame_;
-        trans_stamped_msg_.child_frame_id = "robot";
+        trans_stamped_msg_.child_frame_id = robot_frame_;
         trans_stamped_msg_.header.stamp = odom_msg->header.stamp;
 
         broadcaster_->sendTransform(trans_stamped_msg_);

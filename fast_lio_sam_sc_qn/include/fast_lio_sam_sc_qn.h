@@ -86,6 +86,7 @@ public:
 private:
     ///// basic params
     std::string map_frame_;
+    std::string robot_frame_;
     std::string package_path_;
     std::string seq_name_;
     ///// shared data - odom and pcd

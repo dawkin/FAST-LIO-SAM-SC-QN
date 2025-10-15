@@ -29,6 +29,8 @@ def launch_setup(context, *args, **kwargs):
     rviz_use = LaunchConfiguration('rviz', default='false')
     bag_path = LaunchConfiguration('bag_path', default='')
     buffered = LaunchConfiguration('buffered', default=True)
+    map_frame = LaunchConfiguration('map_frame', default='map')
+    robot_frame = LaunchConfiguration('robot_frame', default='robot')
 
     default_rviz_config_path = os.path.join(
         config_path_value, 'sam_rviz.rviz')
@@ -49,6 +51,7 @@ def launch_setup(context, *args, **kwargs):
         executable="fast_lio_sam_sc_qn_node",
         name="fast_lio_sam_sc_qn_node",
         parameters=[fast_lio_sam_sc_qn_params,
+                    {'basic': {'map_frame': map_frame, 'robot_frame': robot_frame}},
                     {'offline': {'bag_file': bag_path, 'buffered_read': buffered}}],
         output="screen"
     )
