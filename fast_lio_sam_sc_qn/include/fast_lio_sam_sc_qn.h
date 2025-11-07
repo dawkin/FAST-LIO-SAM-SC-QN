@@ -18,6 +18,8 @@
 ///// ROS
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include <rclcpp_lifecycle/lifecycle_node.hpp>
+#include <lifecycle_msgs/msg/transition.hpp>
 #include <rosbag2_cpp/converter_interfaces/serialization_format_converter.hpp>
 #include <rosbag2_cpp/reader.hpp>
 #include <rosbag2_cpp/typesupport_helpers.hpp>
@@ -72,7 +74,7 @@ using namespace std::chrono;
 typedef message_filters::sync_policies::ApproximateTime<nav_msgs::msg::Odometry, sensor_msgs::msg::PointCloud2> odom_pcd_sync_pol;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-class FastLioSamScQn : public rclcpp::Node
+class FastLioSamScQn : public rclcpp_lifecycle::LifecycleNode
 {
 
 public:
@@ -139,10 +141,8 @@ private:
     // odom, pcd sync, and save flag subscribers
     std::shared_ptr<message_filters::Synchronizer<odom_pcd_sync_pol>>
         sub_odom_pcd_sync_ = nullptr;
-    std::shared_ptr<message_filters::Subscriber<nav_msgs::msg::Odometry>>
-        sub_odom_ = nullptr;
-    std::shared_ptr<message_filters::Subscriber<sensor_msgs::msg::PointCloud2>>
-        sub_pcd_ = nullptr;
+    std::shared_ptr<message_filters::Subscriber<nav_msgs::msg::Odometry, rclcpp_lifecycle::LifecycleNode>> sub_odom_;
+    std::shared_ptr<message_filters::Subscriber<sensor_msgs::msg::PointCloud2, rclcpp_lifecycle::LifecycleNode>> sub_pcd_;
     ///// Loop closure
     std::shared_ptr<LoopClosure> loop_closure_;
     ///// Offline Mode
@@ -156,6 +156,13 @@ private:
 public:
     explicit FastLioSamScQn();
     ~FastLioSamScQn();
+
+    rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn on_configure(const rclcpp_lifecycle::State& state) override;
+    rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn on_activate(const rclcpp_lifecycle::State& state) override;
+    rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn on_deactivate(const rclcpp_lifecycle::State& state) override;
+    rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn on_cleanup(const rclcpp_lifecycle::State& state) override;
+    rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn on_shutdown(const rclcpp_lifecycle::State& state) override;
+
 
 private:
     // methods

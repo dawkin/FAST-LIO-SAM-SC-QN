@@ -20,6 +20,8 @@ add_definitions(-DROOT_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/\")
 ### get packages
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rclcpp_lifecycle REQUIRED)
+find_package(lifecycle_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 
 find_package(geometry_msgs REQUIRED)
@@ -78,6 +80,8 @@ include_directories(
 
 set(dependencies
   rclcpp
+  rclcpp_lifecycle
+  lifecycle_msgs
   ament_index_cpp
   rosbag2_cpp
   rosbag2_storage
