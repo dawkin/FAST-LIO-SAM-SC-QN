@@ -73,45 +73,51 @@ FastLioSamScQn::FastLioSamScQn(): rclcpp_lifecycle::LifecycleNode("FastLioSamScQ
 
 void FastLioSamScQn::initPublishersAndSubscribers()
 {
-    broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(
-            this->shared_from_this());
+  broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(
+    this->shared_from_this());
 
-    static_tf_broadcaster_ = std::make_unique<tf2_ros::StaticTransformBroadcaster>(
-            this->shared_from_this());
+  static_tf_broadcaster_ = std::make_unique<tf2_ros::StaticTransformBroadcaster>(
+    this->shared_from_this());
 
-    corrected_pcd_map_pub_     = this->create_publisher<PointCloudT>("/corrected_map", 10);
-    corrected_current_pcd_pub_ = this->create_publisher<PointCloudT>("/corrected_current_pcd", 10);
-    loop_detection_pub_        = this->create_publisher<MarkerT>("/loop_detection", 10);
-    realtime_pose_pub_         = this->create_publisher<PoseStampedT>("/pose_stamped", 10);
-    debug_src_pub_             = this->create_publisher<PointCloudT>("/src", 10);
-    debug_dst_pub_             = this->create_publisher<PointCloudT>("/dst", 10);
-    debug_coarse_aligned_pub_  = this->create_publisher<PointCloudT>("/coarse_aligned_quatro", 10);
-    debug_fine_aligned_pub_    = this->create_publisher<PointCloudT>("/fine_aligned_nano_gicp", 10);
-    odom_pub_              = this->create_publisher<PointCloudT>("/ori_odom", 10);
-    path_pub_              = this->create_publisher<nav_msgs::msg::Path>("/ori_path", 10);
-    corrected_odom_pub_    = this->create_publisher<PointCloudT>("/corrected_odom", 10);
-    corrected_path_pub_    = this->create_publisher<nav_msgs::msg::Path>("/corrected_path", 10);
+  // Publishers
+  corrected_pcd_map_pub_     = this->create_publisher<PointCloudT>("/corrected_map", 10);
+  corrected_current_pcd_pub_ = this->create_publisher<PointCloudT>("/corrected_current_pcd", 10);
+  loop_detection_pub_        = this->create_publisher<MarkerT>("/loop_detection", 10);
+  realtime_pose_pub_         = this->create_publisher<PoseStampedT>("/pose_stamped", 10);
+  debug_src_pub_             = this->create_publisher<PointCloudT>("/src", 10);
+  debug_dst_pub_             = this->create_publisher<PointCloudT>("/dst", 10);
+  debug_coarse_aligned_pub_  = this->create_publisher<PointCloudT>("/coarse_aligned_quatro", 10);
+  debug_fine_aligned_pub_    = this->create_publisher<PointCloudT>("/fine_aligned_nano_gicp", 10);
+  odom_pub_              = this->create_publisher<PointCloudT>("/ori_odom", 10);
+  path_pub_              = this->create_publisher<nav_msgs::msg::Path>("/ori_path", 10);
+  corrected_odom_pub_    = this->create_publisher<PointCloudT>("/corrected_odom", 10);
+  corrected_path_pub_    = this->create_publisher<nav_msgs::msg::Path>("/corrected_path", 10);
 
-    clock_pub_ = this->create_publisher<rosgraph_msgs::msg::Clock>(
-            "/clock",
-            rclcpp::QoS(rclcpp::KeepLast(10)).best_effort().durability_volatile());
+  clock_pub_ = this->create_publisher<rosgraph_msgs::msg::Clock>(
+      "/clock",
+      rclcpp::QoS(rclcpp::KeepLast(10)).best_effort().durability_volatile());
 
-    rmw_qos_profile_t profile = rclcpp::QoS(10).get_rmw_qos_profile();
+  // Subscribers for fast_lio_core
+  RCLCPP_INFO(this->get_logger(), "Subscribing to IMU topic: %s", fast_lio_imu_topic_.c_str());
+  sub_imu_ = this->create_subscription<sensor_msgs::msg::Imu>(
+      fast_lio_imu_topic_, rclcpp::QoS(10).best_effort(),
+      std::bind(&FastLioSamScQn::imuCallback, this, std::placeholders::_1));
 
-    sub_odom_ = std::make_shared<
-        message_filters::Subscriber<OdomT, rclcpp_lifecycle::LifecycleNode>>(
-                this, "/Odometry", profile);
-
-    sub_pcd_ = std::make_shared<
-        message_filters::Subscriber<PointCloudT, rclcpp_lifecycle::LifecycleNode>>(
-                this, "/cloud_registered", profile);
-
-    sub_odom_pcd_sync_ = std::make_shared<message_filters::Synchronizer<odom_pcd_sync_pol>>(
-            odom_pcd_sync_pol(10), *sub_odom_, *sub_pcd_);
-
-    sub_odom_pcd_sync_->registerCallback(
-            std::bind(&FastLioSamScQn::odomPcdCallback, this,
-                std::placeholders::_1, std::placeholders::_2));
+  RCLCPP_INFO(this->get_logger(), "Subscribing to LiDAR topic: %s", fast_lio_lidar_topic_.c_str());
+  if (fast_lio_config_struct_.lidar_type == AVIA)
+  {
+      RCLCPP_INFO(this->get_logger(), "Using Livox (AVIA) subscriber.");
+      sub_lidar_livox_ = this->create_subscription<livox_ros_driver2::msg::CustomMsg>(
+          fast_lio_lidar_topic_, rclcpp::QoS(10).best_effort(),
+          std::bind(&FastLioSamScQn::lidarLivoxCallback, this, std::placeholders::_1));
+  }
+  else
+  {
+      RCLCPP_INFO(this->get_logger(), "Using standard PointCloud2 subscriber.");
+      sub_lidar_pc2_ = this->create_subscription<PointCloudT>(
+          fast_lio_lidar_topic_, rclcpp::QoS(10).best_effort(),
+          std::bind(&FastLioSamScQn::lidarPc2Callback, this, std::placeholders::_1));
+  }
 }
 
 LifecycleNodeInterface::CallbackReturn FastLioSamScQn::on_configure(const rclcpp_lifecycle::State&)
@@ -179,6 +185,73 @@ LifecycleNodeInterface::CallbackReturn FastLioSamScQn::on_configure(const rclcpp
     this->get_parameter("offline.buffered_read", offline_buffered_read_);
     this->get_parameter("offline.buffer_time_sec", bag_buffer_time_sec_);
 
+    // Load the fast_lio config to instantiate fast_lio_core
+    std::string fast_lio_pkg_path;
+    try {
+        fast_lio_pkg_path = ament_index_cpp::get_package_share_directory("fast_lio");
+    } catch (const ament_index_cpp::PackageNotFoundError& e) {
+        RCLCPP_ERROR(this->get_logger(), "fast_lio package not found: %s", e.what());
+        return LifecycleNodeInterface::CallbackReturn::FAILURE;
+    }
+
+    std::string config_file_path = fast_lio_pkg_path + "/config/" + fast_lio_config_;
+    YAML::Node config_yaml;
+    try {
+        config_yaml = YAML::LoadFile(config_file_path);
+        RCLCPP_INFO(this->get_logger(), "Loaded fast_lio config: %s", config_file_path.c_str());
+    } catch (const YAML::BadFile & e) {
+        RCLCPP_ERROR(this->get_logger(), "Failed to load fast_lio config file: %s", config_file_path.c_str());
+        return LifecycleNodeInterface::CallbackReturn::FAILURE;
+    }
+
+    YAML::Node params = config_yaml.begin()->second["ros__parameters"];
+    if (!params) {
+        RCLCPP_ERROR(this->get_logger(), "Could not find 'ros__parameters' in %s", config_file_path.c_str());
+        return LifecycleNodeInterface::CallbackReturn::FAILURE;
+    }
+
+    try {
+        fast_lio_config_struct_.point_filter_num = params["point_filter_num"].as<int>();
+        fast_lio_config_struct_.max_iteration = params["max_iteration"].as<int>();
+        fast_lio_config_struct_.filter_size_surf = params["filter_size_surf"].as<double>();
+        fast_lio_config_struct_.filter_size_map = params["filter_size_map"].as<double>();
+        fast_lio_config_struct_.cube_side_length = params["cube_side_length"].as<double>();
+        fast_lio_config_struct_.runtime_pos_log_enable = params["runtime_pos_log_enable"].as<bool>();
+        YAML::Node common_params = params["common"];
+        fast_lio_config_struct_.time_sync_en = common_params["time_sync_en"].as<bool>();
+        fast_lio_config_struct_.time_offset_lidar_to_imu = common_params["time_offset_lidar_to_imu"].as<double>();
+        // Get topic names for subscribers
+        fast_lio_lidar_topic_ = common_params["lid_topic"].as<std::string>();
+        fast_lio_imu_topic_ = common_params["imu_topic"].as<std::string>();
+
+        YAML::Node preprocess_params = params["preprocess"];
+        fast_lio_config_struct_.lidar_type = preprocess_params["lidar_type"].as<int>();
+        fast_lio_config_struct_.scan_line = preprocess_params["scan_line"].as<int>();
+        fast_lio_config_struct_.blind = preprocess_params["blind"].as<double>();
+        fast_lio_config_struct_.timestamp_unit = preprocess_params["timestamp_unit"].as<int>();
+        fast_lio_config_struct_.scan_rate = preprocess_params["scan_rate"].as<int>();
+        YAML::Node mapping_params = params["mapping"];
+        fast_lio_config_struct_.acc_cov = mapping_params["acc_cov"].as<double>();
+        fast_lio_config_struct_.gyr_cov = mapping_params["gyr_cov"].as<double>();
+        fast_lio_config_struct_.b_acc_cov = mapping_params["b_acc_cov"].as<double>();
+        fast_lio_config_struct_.b_gyr_cov = mapping_params["b_gyr_cov"].as<double>();
+        fast_lio_config_struct_.fov_degree = mapping_params["fov_degree"].as<double>();
+        fast_lio_config_struct_.det_range = mapping_params["det_range"].as<double>();
+        fast_lio_config_struct_.extrinsic_est_en = mapping_params["extrinsic_est_en"].as<bool>();
+        fast_lio_config_struct_.extrinsic_T = mapping_params["extrinsic_T"].as<std::vector<double>>();
+        fast_lio_config_struct_.extrinsic_R = mapping_params["extrinsic_R"].as<std::vector<double>>();
+        fast_lio_config_struct_.pcd_save_en = false; // Disable fast_lio's own pcd saving
+        fast_lio_config_struct_.log_path = "/tmp/";
+        fast_lio_config_struct_.dense_publish_en = false;
+        fast_lio_config_struct_.map_pub_en = true;
+    } catch (const YAML::Exception &e) {
+        RCLCPP_ERROR(this->get_logger(), "Error while parsing fast_lio YAML file: %s", e.what());
+        return LifecycleNodeInterface::CallbackReturn::FAILURE;
+    }
+
+    fast_lio_core_ = std::make_unique<FastLioCore>(fast_lio_config_struct_);
+    RCLCPP_INFO(this->get_logger(), "FastLioCore instantiated.");
+
     loop_closure_.reset(new LoopClosure(lc_config));
 
     initPublishersAndSubscribers();
@@ -213,6 +286,7 @@ LifecycleNodeInterface::CallbackReturn FastLioSamScQn::on_activate(const rclcpp_
     {
         // Online mode
         RCLCPP_INFO(this->get_logger(), "No bag file provided, running in Online mode.");
+        RCLCPP_INFO(this->get_logger(), "Waiting for IMU initialization...");
         /* Timers */
         loop_timer_ = this->create_wall_timer(500ms, std::bind(&FastLioSamScQn::loopTimerFunc, this));
         vis_timer_ = this->create_wall_timer(500ms, std::bind(&FastLioSamScQn::visTimerFunc, this));
@@ -237,10 +311,14 @@ LifecycleNodeInterface::CallbackReturn FastLioSamScQn::on_cleanup(const rclcpp_l
 
     loop_timer_.reset();
     vis_timer_.reset();
-    sub_odom_pcd_sync_.reset();
-    sub_odom_.reset();
-    sub_pcd_.reset();
+
+    // Reset fast_lio subscribers
+    sub_imu_.reset();
+    sub_lidar_pc2_.reset();
+    sub_lidar_livox_.reset();
+
     loop_closure_.reset();
+    fast_lio_core_.reset();
 
     return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
 }
@@ -293,66 +371,6 @@ void FastLioSamScQn::runOffline()
     RCLCPP_INFO(this->get_logger(), "Starting offline processing from bag: %s", bag_file_.c_str());
     rclcpp::Rate rate(200.0);
 
-    FastLioConfig config;
-    std::string fast_lio_pkg_path;
-    try {
-        fast_lio_pkg_path = ament_index_cpp::get_package_share_directory("fast_lio");
-    } catch (const ament_index_cpp::PackageNotFoundError& e) {
-        RCLCPP_ERROR(this->get_logger(), "fast_lio package not found: %s", e.what());
-        return;
-    }
-
-    std::string config_file_path = fast_lio_pkg_path + "/config/" + fast_lio_config_;
-    YAML::Node config_yaml;
-    try {
-        config_yaml = YAML::LoadFile(config_file_path);
-    } catch (const YAML::BadFile & e) {
-        RCLCPP_ERROR(this->get_logger(), "Failed to load fast_lio config file: %s", config_file_path.c_str());
-        return;
-    }
-
-    YAML::Node params = config_yaml.begin()->second["ros__parameters"];
-    if (!params) {
-        RCLCPP_ERROR(this->get_logger(), "Could not find 'ros__parameters' in %s", config_file_path.c_str());
-        return;
-    }
-
-    try {
-        config.point_filter_num = params["point_filter_num"].as<int>();
-        config.max_iteration = params["max_iteration"].as<int>();
-        config.filter_size_surf = params["filter_size_surf"].as<double>();
-        config.filter_size_map = params["filter_size_map"].as<double>();
-        config.cube_side_length = params["cube_side_length"].as<double>();
-        config.runtime_pos_log_enable = params["runtime_pos_log_enable"].as<bool>();
-        YAML::Node common_params = params["common"];
-        config.time_sync_en = common_params["time_sync_en"].as<bool>();
-        config.time_offset_lidar_to_imu = common_params["time_offset_lidar_to_imu"].as<double>();
-        YAML::Node preprocess_params = params["preprocess"];
-        config.lidar_type = preprocess_params["lidar_type"].as<int>();
-        config.scan_line = preprocess_params["scan_line"].as<int>();
-        config.blind = preprocess_params["blind"].as<double>();
-        config.timestamp_unit = preprocess_params["timestamp_unit"].as<int>();
-        config.scan_rate = preprocess_params["scan_rate"].as<int>();
-        YAML::Node mapping_params = params["mapping"];
-        config.acc_cov = mapping_params["acc_cov"].as<double>();
-        config.gyr_cov = mapping_params["gyr_cov"].as<double>();
-        config.b_acc_cov = mapping_params["b_acc_cov"].as<double>();
-        config.b_gyr_cov = mapping_params["b_gyr_cov"].as<double>();
-        config.fov_degree = mapping_params["fov_degree"].as<double>();
-        config.det_range = mapping_params["det_range"].as<double>();
-        config.extrinsic_est_en = mapping_params["extrinsic_est_en"].as<bool>();
-        config.extrinsic_T = mapping_params["extrinsic_T"].as<std::vector<double>>();
-        config.extrinsic_R = mapping_params["extrinsic_R"].as<std::vector<double>>();
-        config.pcd_save_en = false;
-        config.log_path = "/tmp/";
-        config.dense_publish_en = false;
-        config.map_pub_en = true;
-    } catch (const YAML::Exception &e) {
-        RCLCPP_ERROR(this->get_logger(), "Error while parsing YAML file: %s", e.what());
-        return;
-    }
-    fast_lio_core_ = std::make_unique<FastLioCore>(config);
-
     rosbag2_storage::StorageOptions storage_options({bag_file_, ""});
     rosbag2_cpp::ConverterOptions converter_options;
     rosbag2_cpp::readers::SequentialReader reader;
@@ -363,8 +381,9 @@ void FastLioSamScQn::runOffline()
         return;
     }
 
-    std::string lid_topic = params["common"]["lid_topic"].as<std::string>();
-    std::string imu_topic = params["common"]["imu_topic"].as<std::string>();
+    // Use topic names from loaded config
+    std::string lid_topic = fast_lio_lidar_topic_;
+    std::string imu_topic = fast_lio_imu_topic_;
     std::string tf_topic = "/tf";
     std::string tf_static_topic = "/tf_static";
     rosbag2_storage::StorageFilter filter;
@@ -423,7 +442,7 @@ void FastLioSamScQn::runOffline()
                 } else if (serialized_msg->topic_name == lid_topic) {
                     PointCloudXYZI::Ptr cloud(new PointCloudXYZI());
                     double header_stamp = 0.0;
-                    if (config.lidar_type == AVIA) {
+                    if (fast_lio_config_struct_.lidar_type == AVIA) {
                         auto livox_msg = std::make_unique<livox_ros_driver2::msg::CustomMsg>();
                         livox_serialization.deserialize_message(&extracted_serialized_msg, livox_msg.get());
                         header_stamp = get_time_sec(livox_msg->header.stamp);
@@ -525,7 +544,6 @@ void FastLioSamScQn::runOffline()
                         const auto &voxelized_map = voxelizePcd(corrected_map, voxel_res_);
                         corrected_pcd_map_pub_->publish(pclToPclRos(*voxelized_map, map_frame_));
                     }
-
                     rate.sleep();
                 }
             }
@@ -552,7 +570,7 @@ void FastLioSamScQn::runOffline()
             {
                 PointCloudXYZI::Ptr cloud(new PointCloudXYZI());
                 double header_stamp = 0.0;
-                if (config.lidar_type == AVIA) {
+                if (fast_lio_config_struct_.lidar_type == AVIA) {
                     auto livox_msg = std::make_unique<livox_ros_driver2::msg::CustomMsg>();
                     livox_serialization.deserialize_message(&extracted_serialized_msg, livox_msg.get());
                     header_stamp = get_time_sec(livox_msg->header.stamp);
@@ -673,7 +691,6 @@ void FastLioSamScQn::runOffline()
                     const auto &voxelized_map = voxelizePcd(corrected_map, voxel_res_);
                     corrected_pcd_map_pub_->publish(pclToPclRos(*voxelized_map, map_frame_));
                 }
-
                 rate.sleep();
             }
         }
@@ -737,6 +754,96 @@ void FastLioSamScQn::runOffline()
 
     RCLCPP_INFO(this->get_logger(), "Offline processing finished. Final results are now available.");
     rclcpp::shutdown();
+}
+
+void FastLioSamScQn::imuCallback(const sensor_msgs::msg::Imu::ConstSharedPtr msg)
+{
+    if (!imu_initialized_)
+    {
+        init_imu_data_.push_back(msg);
+        if (init_imu_data_.size() < INIT_IMU_COUNT)
+        {
+            RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                "Waiting for IMU initialization... %zu / %d", init_imu_data_.size(), INIT_IMU_COUNT);
+            return;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(fast_lio_core_->mtx_buffer_);
+            fast_lio_core_->imu_buffer_ = init_imu_data_;
+        }
+        fast_lio_core_->initial_setup();
+        imu_initialized_ = true;
+        RCLCPP_INFO(this->get_logger(), "IMU Initialized for Live Mode.");
+        return; // Don't process this first message
+    }
+
+    // Push to buffer
+    std::lock_guard<std::mutex> lock(fast_lio_core_->mtx_buffer_);
+    fast_lio_core_->imu_buffer_.push_back(msg);
+}
+
+void FastLioSamScQn::lidarPc2Callback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg)
+{
+    if (!imu_initialized_) return;
+
+    auto pc2_msg_copy = std::make_unique<sensor_msgs::msg::PointCloud2>(*msg);
+
+    PointCloudXYZI::Ptr cloud(new PointCloudXYZI());
+    double header_stamp = get_time_sec(pc2_msg_copy->header.stamp);
+    fast_lio_core_->p_pre_->process(std::move(pc2_msg_copy), cloud);
+    processLidarData(header_stamp, cloud);
+}
+
+void FastLioSamScQn::lidarLivoxCallback(const livox_ros_driver2::msg::CustomMsg::ConstSharedPtr msg)
+{
+    if (!imu_initialized_) return;
+
+    auto livox_msg_copy = std::make_unique<livox_ros_driver2::msg::CustomMsg>(*msg);
+
+    PointCloudXYZI::Ptr cloud(new PointCloudXYZI());
+    double header_stamp = get_time_sec(livox_msg_copy->header.stamp);
+    fast_lio_core_->p_pre_->process(std::move(livox_msg_copy), cloud);
+    processLidarData(header_stamp, cloud);
+}
+
+void FastLioSamScQn::processLidarData(double header_stamp, PointCloudXYZI::Ptr cloud)
+{
+    {
+        std::lock_guard<std::mutex> lock(fast_lio_core_->mtx_buffer_);
+        fast_lio_core_->lidar_buffer_.push_back(cloud);
+        fast_lio_core_->time_buffer_.push_back(header_stamp);
+    }
+
+    MeasureGroup meas;
+    if (fast_lio_core_->sync_packages(meas))
+    {
+        FrameResult result = fast_lio_core_->process_frame(meas);
+        if (result.cloud.empty()) return;
+
+        nav_msgs::msg::Odometry odom_msg;
+        geometry_msgs::msg::Quaternion quat;
+        fast_lio_core_->get_publish_odometry(odom_msg, quat);
+        odom_msg.header.stamp = get_ros_time(fast_lio_core_->get_lidar_end_time());
+        odom_msg.header.frame_id = map_frame_;
+
+        Eigen::Matrix4d pose_world = Eigen::Matrix4d::Identity();
+        pose_world.block<3, 3>(0, 0) = Eigen::Quaterniond(odom_msg.pose.pose.orientation.w, odom_msg.pose.pose.orientation.x, odom_msg.pose.pose.orientation.y, odom_msg.pose.pose.orientation.z).toRotationMatrix();
+        pose_world(0, 3) = odom_msg.pose.pose.position.x;
+        pose_world(1, 3) = odom_msg.pose.pose.position.y;
+        pose_world(2, 3) = odom_msg.pose.pose.position.z;
+
+        pcl::PointCloud<pcl::PointXYZI>::Ptr cloud_world(new pcl::PointCloud<pcl::PointXYZI>());
+        pcl::transformPointCloud(result.cloud, *cloud_world, pose_world);
+
+        sensor_msgs::msg::PointCloud2 pcd_msg;
+        pcl::toROSMsg(*cloud_world, pcd_msg);
+        pcd_msg.header.stamp = odom_msg.header.stamp;
+        pcd_msg.header.frame_id = "body";
+
+        odomPcdCallback(std::make_shared<nav_msgs::msg::Odometry>(odom_msg),
+                        std::make_shared<sensor_msgs::msg::PointCloud2>(pcd_msg));
+    }
 }
 
 void FastLioSamScQn::odomPcdCallback(const nav_msgs::msg::Odometry::ConstSharedPtr &odom_msg,
@@ -943,6 +1050,7 @@ void FastLioSamScQn::visTimerFunc()
     if (global_map_vis_switch_ && corrected_pcd_map_pub_->get_subscription_count() > 0) // save time, only once
     {
         pcl::PointCloud<PointType>::Ptr corrected_map(new pcl::PointCloud<PointType>());
+        if (keyframes_.empty()) return;
         corrected_map->reserve(keyframes_[0].pcd_.size() * keyframes_.size()); // it's an approximated size
         {
             std::lock_guard<std::mutex> lock(keyframes_mutex_);
@@ -1029,6 +1137,7 @@ void FastLioSamScQn::saveFlagCallback(const std_msgs::msg::String::ConstSharedPt
     if (save_map_pcd_)
     {
         pcl::PointCloud<PointType>::Ptr corrected_map(new pcl::PointCloud<PointType>());
+        if (keyframes_.empty()) return;
         corrected_map->reserve(keyframes_[0].pcd_.size() * keyframes_.size()); // it's an approximated size
         {
             std::lock_guard<std::mutex> lock(keyframes_mutex_);
@@ -1049,6 +1158,12 @@ FastLioSamScQn::~FastLioSamScQn()
 {
 
     RCLCPP_INFO(this->get_logger(), "FastLioSamScQn Exit and Saving...");
+
+    if (keyframes_.empty())
+    {
+        RCLCPP_WARN(this->get_logger(), "No keyframes to save. Exiting.");
+        return;
+    }
 
     if (save_map_bag_)
     {

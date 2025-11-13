@@ -138,17 +138,26 @@ private:
     rclcpp::Subscription<StringT>::SharedPtr sub_save_flag_;
 
     rclcpp::TimerBase::SharedPtr loop_timer_, vis_timer_;
-    // odom, pcd sync, and save flag subscribers
-    std::shared_ptr<message_filters::Synchronizer<odom_pcd_sync_pol>>
-        sub_odom_pcd_sync_ = nullptr;
-    std::shared_ptr<message_filters::Subscriber<nav_msgs::msg::Odometry, rclcpp_lifecycle::LifecycleNode>> sub_odom_;
-    std::shared_ptr<message_filters::Subscriber<sensor_msgs::msg::PointCloud2, rclcpp_lifecycle::LifecycleNode>> sub_pcd_;
+
+    /// Subscriber for fast_lio_core
+    rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_imu_;
+    rclcpp::Subscription<PointCloudT>::SharedPtr sub_lidar_pc2_;
+    rclcpp::Subscription<livox_ros_driver2::msg::CustomMsg>::SharedPtr sub_lidar_livox_;
+
     ///// Loop closure
     std::shared_ptr<LoopClosure> loop_closure_;
-    ///// Offline Mode
+
+    ///// fast_lio_core
     std::unique_ptr<FastLioCore> fast_lio_core_;
-    std::string bag_file_;
+    FastLioConfig fast_lio_config_struct_;
+    std::deque<sensor_msgs::msg::Imu::ConstSharedPtr> init_imu_data_;
+    bool imu_initialized_ = false;
+    std::string fast_lio_lidar_topic_;
+    std::string fast_lio_imu_topic_;
     std::string fast_lio_config_;
+
+    ///// Offline Mode
+    std::string bag_file_;
     bool offline_post_loop_optimization_ = false;
     bool offline_buffered_read_ = true;
     double bag_buffer_time_sec_ = 2.0;
@@ -171,6 +180,10 @@ private:
     bool checkIfKeyframe(const PosePcd &pose_pcd_in, const PosePcd &latest_pose_pcd);
     visualization_msgs::msg::Marker getLoopMarkers(const gtsam::Values &corrected_esti_in);
     // cb
+    void imuCallback(const sensor_msgs::msg::Imu::ConstSharedPtr msg);
+    void lidarPc2Callback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg);
+    void lidarLivoxCallback(const livox_ros_driver2::msg::CustomMsg::ConstSharedPtr msg);
+    void processLidarData(double header_stamp, PointCloudXYZI::Ptr cloud);
     void odomPcdCallback(const nav_msgs::msg::Odometry::ConstSharedPtr &odom_msg,
                          const sensor_msgs::msg::PointCloud2::ConstSharedPtr &pcd_msg);
     void saveFlagCallback(const std_msgs::msg::String::ConstSharedPtr &msg);
