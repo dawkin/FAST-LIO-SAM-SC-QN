@@ -91,6 +91,7 @@ private:
     std::string robot_frame_;
     std::string package_path_;
     std::string seq_name_;
+    bool use_gravity_alignment_ = true;
     ///// shared data - odom and pcd
     std::mutex realtime_pose_mutex_, keyframes_mutex_;
     std::mutex graph_mutex_, vis_mutex_;

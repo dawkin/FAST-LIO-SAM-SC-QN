@@ -15,6 +15,7 @@ FastLioSamScQn::FastLioSamScQn(): rclcpp_lifecycle::LifecycleNode("FastLioSamScQ
     this->declare_parameter("basic.robot_frame", "robot");
     this->declare_parameter("basic.loop_update_hz", 2.0);
     this->declare_parameter("basic.vis_hz", 1.0);
+    this->declare_parameter("basic.use_gravity_alignment", use_gravity_alignment_);
     this->declare_parameter("save_voxel_resolution", voxel_res_);
     this->declare_parameter("quatro_nano_gicp_voxel_resolution",lc_config.voxel_res_);
     /* keyframe */
@@ -134,6 +135,7 @@ LifecycleNodeInterface::CallbackReturn FastLioSamScQn::on_configure(const rclcpp
     this->get_parameter("basic.robot_frame", robot_frame_);
     this->get_parameter("basic.loop_update_hz", loop_update_hz);
     this->get_parameter("basic.vis_hz", vis_hz);
+    this->get_parameter("basic.use_gravity_alignment", use_gravity_alignment_);
     this->get_parameter("save_voxel_resolution", voxel_res_);
     this->get_parameter("quatro_nano_gicp_voxel_resolution", lc_config.voxel_res_);
     /* keyframe */
@@ -852,6 +854,26 @@ void FastLioSamScQn::odomPcdCallback(const nav_msgs::msg::Odometry::ConstSharedP
     Eigen::Matrix4d last_odom_tf;
     last_odom_tf = current_frame_.pose_eig_;                              // to calculate delta
     current_frame_ = PosePcd(*odom_msg, *pcd_msg, current_keyframe_idx_); // to be checked if keyframe or not
+
+    if (use_gravity_alignment_)
+    {
+        // Downward Z-axis
+        Eigen::Vector3d z_down(0.0, 0.0, -1.0);
+
+        // Retrieve current gravity estimate from the fast_lio state
+        auto estimated_gravity = fast_lio_core_->kf_.get_x().grav;
+        Eigen::Vector3d g_vec(estimated_gravity[0], estimated_gravity[1], estimated_gravity[2]);
+
+        // Fast-LIO state.grav estimates the gravity vector in the local world frame
+        // We rotate this vector to align with z_down, the standard downward Z axis
+        Eigen::Matrix4d align_tf = Eigen::Matrix4d::Identity();
+        align_tf.block<3,3>(0,0) = getRotationToAlignVectors(g_vec, z_down);
+
+        // Apply alignment to current frame
+        current_frame_.pose_eig_ = align_tf * current_frame_.pose_eig_;
+        current_frame_.pose_corrected_eig_ = align_tf * current_frame_.pose_corrected_eig_;
+    }
+
     high_resolution_clock::time_point t1 = high_resolution_clock::now();
     {
         //// 1. realtime pose = last corrected odom * delta (last -> current)

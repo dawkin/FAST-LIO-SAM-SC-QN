@@ -89,6 +89,32 @@ inline pcl::PointCloud<PointType>::Ptr voxelizePcd(const pcl::PointCloud<PointTy
     return pcd_out;
 }
 
+inline Eigen::Matrix3d getRotationToAlignVectors(const Eigen::Vector3d& source, const Eigen::Vector3d& target)
+{
+    Eigen::Vector3d src = source.normalized();
+    Eigen::Vector3d tgt = target.normalized();
+
+    double dot = src.dot(tgt);
+
+    // Vectors are parallel
+    if (dot >= 0.99999) return Eigen::Matrix3d::Identity();
+
+    // Vectors are opposite
+    if (dot <= -0.99999) {
+        // Rotate 180 deg around an arbitrary orthogonal axis
+        Eigen::Vector3d axis = src.cross(Eigen::Vector3d::UnitX());
+        if (axis.norm() < 0.01) // if src was parallel to X, try Y
+            axis = src.cross(Eigen::Vector3d::UnitY());
+        axis.normalize();
+        return Eigen::AngleAxisd(M_PI, axis).toRotationMatrix();
+    }
+
+    Eigen::Vector3d axis = src.cross(tgt).normalized();
+    double angle = std::acos(dot);
+
+    return Eigen::AngleAxisd(angle, axis).toRotationMatrix();
+}
+
 //////////////////////////////////////////////////////////////////////
 ///// conversions
 inline gtsam::Pose3 poseEigToGtsamPose(const Eigen::Matrix4d &pose_eig_in)
