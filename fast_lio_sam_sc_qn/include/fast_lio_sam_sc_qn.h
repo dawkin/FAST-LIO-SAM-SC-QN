@@ -193,6 +193,7 @@ private:
     // offline
     void runOffline();
     void performLoopClosureForKf(size_t keyframe_idx);
+    void saveMaps();
 };
 
 

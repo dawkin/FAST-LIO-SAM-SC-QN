@@ -12,6 +12,5 @@ int main(int argc, char **argv)
 
     executor.spin();
 
-    rclcpp::shutdown();
     return 0;
 }

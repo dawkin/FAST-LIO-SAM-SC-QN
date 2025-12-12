@@ -97,28 +97,6 @@ void FastLioSamScQn::initPublishersAndSubscribers()
   clock_pub_ = this->create_publisher<rosgraph_msgs::msg::Clock>(
       "/clock",
       rclcpp::QoS(rclcpp::KeepLast(10)).best_effort().durability_volatile());
-
-  // Subscribers for fast_lio_core
-  RCLCPP_INFO(this->get_logger(), "Subscribing to IMU topic: %s", fast_lio_imu_topic_.c_str());
-  sub_imu_ = this->create_subscription<sensor_msgs::msg::Imu>(
-      fast_lio_imu_topic_, rclcpp::QoS(10).best_effort(),
-      std::bind(&FastLioSamScQn::imuCallback, this, std::placeholders::_1));
-
-  RCLCPP_INFO(this->get_logger(), "Subscribing to LiDAR topic: %s", fast_lio_lidar_topic_.c_str());
-  if (fast_lio_config_struct_.lidar_type == AVIA)
-  {
-      RCLCPP_INFO(this->get_logger(), "Using Livox (AVIA) subscriber.");
-      sub_lidar_livox_ = this->create_subscription<livox_ros_driver2::msg::CustomMsg>(
-          fast_lio_lidar_topic_, rclcpp::QoS(10).best_effort(),
-          std::bind(&FastLioSamScQn::lidarLivoxCallback, this, std::placeholders::_1));
-  }
-  else
-  {
-      RCLCPP_INFO(this->get_logger(), "Using standard PointCloud2 subscriber.");
-      sub_lidar_pc2_ = this->create_subscription<PointCloudT>(
-          fast_lio_lidar_topic_, rclcpp::QoS(10).best_effort(),
-          std::bind(&FastLioSamScQn::lidarPc2Callback, this, std::placeholders::_1));
-  }
 }
 
 LifecycleNodeInterface::CallbackReturn FastLioSamScQn::on_configure(const rclcpp_lifecycle::State&)
@@ -288,6 +266,29 @@ LifecycleNodeInterface::CallbackReturn FastLioSamScQn::on_activate(const rclcpp_
     {
         // Online mode
         RCLCPP_INFO(this->get_logger(), "No bag file provided, running in Online mode.");
+
+        // Subscribers for fast_lio_core
+        RCLCPP_INFO(this->get_logger(), "Subscribing to IMU topic: %s", fast_lio_imu_topic_.c_str());
+        sub_imu_ = this->create_subscription<sensor_msgs::msg::Imu>(
+                fast_lio_imu_topic_, rclcpp::QoS(10).best_effort(),
+                std::bind(&FastLioSamScQn::imuCallback, this, std::placeholders::_1));
+
+        RCLCPP_INFO(this->get_logger(), "Subscribing to LiDAR topic: %s", fast_lio_lidar_topic_.c_str());
+        if (fast_lio_config_struct_.lidar_type == AVIA)
+        {
+            RCLCPP_INFO(this->get_logger(), "Using Livox (AVIA) subscriber.");
+            sub_lidar_livox_ = this->create_subscription<livox_ros_driver2::msg::CustomMsg>(
+                    fast_lio_lidar_topic_, rclcpp::QoS(10).best_effort(),
+                    std::bind(&FastLioSamScQn::lidarLivoxCallback, this, std::placeholders::_1));
+        }
+        else
+        {
+            RCLCPP_INFO(this->get_logger(), "Using standard PointCloud2 subscriber.");
+            sub_lidar_pc2_ = this->create_subscription<PointCloudT>(
+                    fast_lio_lidar_topic_, rclcpp::QoS(10).best_effort(),
+                    std::bind(&FastLioSamScQn::lidarPc2Callback, this, std::placeholders::_1));
+        }
+
         RCLCPP_INFO(this->get_logger(), "Waiting for IMU initialization...");
         /* Timers */
         loop_timer_ = this->create_wall_timer(500ms, std::bind(&FastLioSamScQn::loopTimerFunc, this));
@@ -303,6 +304,12 @@ LifecycleNodeInterface::CallbackReturn FastLioSamScQn::on_deactivate(const rclcp
 
     loop_timer_.reset();
     vis_timer_.reset();
+
+    sub_imu_.reset();
+    sub_lidar_pc2_.reset();
+    sub_lidar_livox_.reset();
+
+    saveMaps();
 
     return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
 }
@@ -328,7 +335,80 @@ LifecycleNodeInterface::CallbackReturn FastLioSamScQn::on_cleanup(const rclcpp_l
 LifecycleNodeInterface::CallbackReturn FastLioSamScQn::on_shutdown(const rclcpp_lifecycle::State&)
 {
     RCLCPP_INFO(this->get_logger(), "on_shutdown()");
+    rclcpp::shutdown();
     return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
+}
+
+void FastLioSamScQn::saveMaps()
+{
+    if (keyframes_.empty())
+    {
+        RCLCPP_WARN(this->get_logger(), "No keyframes to save. Exiting.");
+        return;
+    }
+
+    if (save_map_bag_)
+    {
+        auto writer = std::make_unique<rosbag2_cpp::Writer>();
+        try {
+            writer->open(save_map_path_ + "map_bag");
+        } catch (const std::exception& e) {
+            RCLCPP_ERROR(this->get_logger(), "Failed to open bag file for writing: %s", e.what());
+            return;
+        }
+
+        const std::string pose_topic_name = "/keyframe_pose";
+        rosbag2_storage::TopicMetadata pose_topic_metadata;
+        pose_topic_metadata.name = pose_topic_name;
+        pose_topic_metadata.type = "geometry_msgs/msg/PoseStamped";
+        pose_topic_metadata.serialization_format = rmw_get_serialization_format();
+        writer->create_topic(pose_topic_metadata);
+
+        const std::string pcd_topic_name = "/keyframe_pcd";
+        rosbag2_storage::TopicMetadata pcd_topic_metadata;
+        pcd_topic_metadata.name = pcd_topic_name;
+        pcd_topic_metadata.type = "sensor_msgs/msg/PointCloud2";
+        pcd_topic_metadata.serialization_format = rmw_get_serialization_format();
+        writer->create_topic(pcd_topic_metadata);
+
+        {
+            std::lock_guard<std::mutex> lock(keyframes_mutex_);
+            for (const auto& keyframe : keyframes_) {
+                rclcpp::Time time = fromSec(keyframe.timestamp_);
+
+                auto pose_msg = std::make_shared<geometry_msgs::msg::PoseStamped>(
+                        poseEigToPoseStamped(keyframe.pose_corrected_eig_, map_frame_)
+                        );
+                pose_msg->header.stamp = time;
+                writer->write(*pose_msg, pose_topic_name, time);
+
+                auto pcd_msg = std::make_shared<sensor_msgs::msg::PointCloud2>(
+                        pclToPclRos(keyframe.pcd_, map_frame_)
+                        );
+                pcd_msg->header.stamp = time;
+                writer->write(*pcd_msg, pcd_topic_name, time);
+            }
+        }
+
+        writer->close();
+        RCLCPP_INFO(this->get_logger(), "\033[36;1mResult saved in .bag format!!!\033[0m");
+    }
+
+    if (save_map_pcd_)
+    {
+        pcl::PointCloud<PointType>::Ptr corrected_map(new pcl::PointCloud<PointType>());
+        corrected_map->reserve(keyframes_[0].pcd_.size() * keyframes_.size()); // it's an approximated size
+        {
+            std::lock_guard<std::mutex> lock(keyframes_mutex_);
+            for (size_t i = 0; i < keyframes_.size(); ++i)
+            {
+                *corrected_map += transformPcd(keyframes_[i].pcd_, keyframes_[i].pose_corrected_eig_);
+            }
+        }
+        const auto &voxelized_map = voxelizePcd(corrected_map, voxel_res_);
+        pcl::io::savePCDFileASCII<PointType>(save_map_path_ + "map.pcd", *voxelized_map);
+        RCLCPP_INFO(this->get_logger(), "\033[32;1mResult saved in .pcd format!!!\033[0m");
+    }
 }
 
 void FastLioSamScQn::performLoopClosureForKf(size_t keyframe_idx)
@@ -1179,76 +1259,6 @@ void FastLioSamScQn::saveFlagCallback(const std_msgs::msg::String::ConstSharedPt
 FastLioSamScQn::~FastLioSamScQn()
 {
 
-    RCLCPP_INFO(this->get_logger(), "FastLioSamScQn Exit and Saving...");
-
-    if (keyframes_.empty())
-    {
-        RCLCPP_WARN(this->get_logger(), "No keyframes to save. Exiting.");
-        return;
-    }
-
-    if (save_map_bag_)
-    {
-        auto writer = std::make_unique<rosbag2_cpp::Writer>();
-        try {
-            writer->open(save_map_path_ + "map_bag");
-        } catch (const std::exception& e) {
-            RCLCPP_ERROR(this->get_logger(), "Failed to open bag file for writing: %s", e.what());
-            return;
-        }
-
-        const std::string pose_topic_name = "/keyframe_pose";
-        rosbag2_storage::TopicMetadata pose_topic_metadata;
-        pose_topic_metadata.name = pose_topic_name;
-        pose_topic_metadata.type = "geometry_msgs/msg/PoseStamped";
-        pose_topic_metadata.serialization_format = rmw_get_serialization_format();
-        writer->create_topic(pose_topic_metadata);
-
-        const std::string pcd_topic_name = "/keyframe_pcd";
-        rosbag2_storage::TopicMetadata pcd_topic_metadata;
-        pcd_topic_metadata.name = pcd_topic_name;
-        pcd_topic_metadata.type = "sensor_msgs/msg/PointCloud2";
-        pcd_topic_metadata.serialization_format = rmw_get_serialization_format();
-        writer->create_topic(pcd_topic_metadata);
-
-        {
-            std::lock_guard<std::mutex> lock(keyframes_mutex_);
-            for (const auto& keyframe : keyframes_) {
-                rclcpp::Time time = fromSec(keyframe.timestamp_);
-
-                auto pose_msg = std::make_shared<geometry_msgs::msg::PoseStamped>(
-                    poseEigToPoseStamped(keyframe.pose_corrected_eig_, map_frame_)
-                );
-                pose_msg->header.stamp = time;
-                writer->write(*pose_msg, pose_topic_name, time);
-
-                auto pcd_msg = std::make_shared<sensor_msgs::msg::PointCloud2>(
-                    pclToPclRos(keyframe.pcd_, map_frame_)
-                );
-                pcd_msg->header.stamp = time;
-                writer->write(*pcd_msg, pcd_topic_name, time);
-            }
-        }
-
-        writer->close();
-        RCLCPP_INFO(this->get_logger(), "\033[36;1mResult saved in .bag format!!!\033[0m");
-    }
-
-    if (save_map_pcd_)
-    {
-        pcl::PointCloud<PointType>::Ptr corrected_map(new pcl::PointCloud<PointType>());
-        corrected_map->reserve(keyframes_[0].pcd_.size() * keyframes_.size()); // it's an approximated size
-        {
-            std::lock_guard<std::mutex> lock(keyframes_mutex_);
-            for (size_t i = 0; i < keyframes_.size(); ++i)
-            {
-                *corrected_map += transformPcd(keyframes_[i].pcd_, keyframes_[i].pose_corrected_eig_);
-            }
-        }
-        const auto &voxelized_map = voxelizePcd(corrected_map, voxel_res_);
-        pcl::io::savePCDFileASCII<PointType>(save_map_path_ + "map.pcd", *voxelized_map);
-        RCLCPP_INFO(this->get_logger(), "\033[32;1mResult saved in .pcd format!!!\033[0m");
-    }
 }
 
 void FastLioSamScQn::updateOdomsAndPaths(const PosePcd &pose_pcd_in)
