@@ -66,7 +66,6 @@ FastLioSamScQn::FastLioSamScQn(): rclcpp_lifecycle::LifecycleNode("FastLioSamScQ
     this->declare_parameter("offline.bag_file", "");
     this->declare_parameter("offline.fast_lio_config", "mid360.yaml");
     this->declare_parameter("offline.post_loop_optimization", false);
-    this->declare_parameter("offline.buffered_read", true);
     this->declare_parameter("offline.buffer_time_sec", 2.0);
 
     RCLCPP_INFO(this->get_logger(), "ctor, parameters declared");
@@ -97,6 +96,9 @@ void FastLioSamScQn::initPublishersAndSubscribers()
   clock_pub_ = this->create_publisher<rosgraph_msgs::msg::Clock>(
       "/clock",
       rclcpp::QoS(rclcpp::KeepLast(10)).best_effort().durability_volatile());
+
+  pub_ext_lat_ = this->create_publisher<std_msgs::msg::Float64>("/ext/lat", 10);
+  pub_ext_lon_ = this->create_publisher<std_msgs::msg::Float64>("/ext/lon", 10);
 }
 
 LifecycleNodeInterface::CallbackReturn FastLioSamScQn::on_configure(const rclcpp_lifecycle::State&)
@@ -162,7 +164,6 @@ LifecycleNodeInterface::CallbackReturn FastLioSamScQn::on_configure(const rclcpp
     this->get_parameter("offline.bag_file", bag_file_);
     this->get_parameter("offline.fast_lio_config", fast_lio_config_);
     this->get_parameter("offline.post_loop_optimization", offline_post_loop_optimization_);
-    this->get_parameter("offline.buffered_read", offline_buffered_read_);
     this->get_parameter("offline.buffer_time_sec", bag_buffer_time_sec_);
 
     // Load the fast_lio config to instantiate fast_lio_core
@@ -468,188 +469,72 @@ void FastLioSamScQn::runOffline()
     std::string imu_topic = fast_lio_imu_topic_;
     std::string tf_topic = "/tf";
     std::string tf_static_topic = "/tf_static";
+    std::string lat_topic = "/ext/lat";
+    std::string lon_topic = "/ext/lon";
+
     rosbag2_storage::StorageFilter filter;
-    filter.topics = {lid_topic, imu_topic, tf_topic, tf_static_topic};
+    filter.topics = {lid_topic, imu_topic, tf_topic, tf_static_topic, lat_topic, lon_topic};
     reader.set_filter(filter);
 
     rclcpp::Serialization<sensor_msgs::msg::Imu> imu_serialization;
     rclcpp::Serialization<livox_ros_driver2::msg::CustomMsg> livox_serialization;
     rclcpp::Serialization<sensor_msgs::msg::PointCloud2> pc2_serialization;
     rclcpp::Serialization<tf2_msgs::msg::TFMessage> tf_serialization;
+    rclcpp::Serialization<std_msgs::msg::Float64> double_serialization;
 
-    if (offline_buffered_read_)
-    {
-        RCLCPP_INFO(this->get_logger(), "Offline mode with BUFFERED reading.");
+    RCLCPP_INFO(this->get_logger(), "Offline mode with BUFFERED reading.");
 
-        RCLCPP_INFO(this->get_logger(), "Reading initial messages for IMU initialization...");
-        deque<sensor_msgs::msg::Imu::ConstSharedPtr> init_imu_data;
-        while (reader.has_next() && init_imu_data.size() < INIT_IMU_COUNT) {
-            auto serialized_msg = reader.read_next();
-            if (serialized_msg->topic_name == imu_topic) {
-                auto msg = std::make_shared<sensor_msgs::msg::Imu>();
-                rclcpp::SerializedMessage extracted_serialized_msg(*serialized_msg->serialized_data);
-                imu_serialization.deserialize_message(&extracted_serialized_msg, msg.get());
-                init_imu_data.push_back(msg);
-            }
-        }
-
-        if (init_imu_data.size() < INIT_IMU_COUNT) {
-            RCLCPP_ERROR(this->get_logger(), "Not enough IMU messages in bag to initialize. Found %zu, need %d.", init_imu_data.size(), INIT_IMU_COUNT);
-            return;
-        }
-
-        {
-            std::lock_guard<std::mutex> lock(fast_lio_core_->mtx_buffer_);
-            fast_lio_core_->imu_buffer_ = init_imu_data;
-        }
-        fast_lio_core_->initial_setup();
-        RCLCPP_INFO(this->get_logger(), "IMU Initialized.");
-
-        reader.seek(0);
-        std::deque<StampedMessage> message_buffer;
-
-        while(reader.has_next() && rclcpp::ok()) {
-            while(reader.has_next()) {
-                if (!message_buffer.empty() && 
-                    (message_buffer.back().timestamp - message_buffer.front().timestamp > bag_buffer_time_sec_)) {
-                    break; 
-                }
-                auto serialized_msg = reader.read_next();
-                rclcpp::SerializedMessage extracted_serialized_msg(*serialized_msg->serialized_data);
-
-                if (serialized_msg->topic_name == imu_topic) {
-                    auto msg = std::make_shared<sensor_msgs::msg::Imu>();
-                    imu_serialization.deserialize_message(&extracted_serialized_msg, msg.get());
-                    message_buffer.push_back({get_time_sec(msg->header.stamp), msg, nullptr, nullptr, imu_topic});
-                } else if (serialized_msg->topic_name == lid_topic) {
-                    PointCloudXYZI::Ptr cloud(new PointCloudXYZI());
-                    double header_stamp = 0.0;
-                    if (fast_lio_config_struct_.lidar_type == AVIA) {
-                        auto livox_msg = std::make_unique<livox_ros_driver2::msg::CustomMsg>();
-                        livox_serialization.deserialize_message(&extracted_serialized_msg, livox_msg.get());
-                        header_stamp = get_time_sec(livox_msg->header.stamp);
-                        fast_lio_core_->p_pre_->process(std::move(livox_msg), cloud);
-                    } else {
-                        auto pc2_msg = std::make_unique<sensor_msgs::msg::PointCloud2>();
-                        pc2_serialization.deserialize_message(&extracted_serialized_msg, pc2_msg.get());
-                        header_stamp = get_time_sec(pc2_msg->header.stamp);
-                        fast_lio_core_->p_pre_->process(std::move(pc2_msg), cloud);
-                    }
-                    message_buffer.push_back({header_stamp, nullptr, cloud, nullptr, lid_topic});
-                } else if (serialized_msg->topic_name == tf_topic || serialized_msg->topic_name == tf_static_topic) {
-                    auto msg = std::make_shared<tf2_msgs::msg::TFMessage>();
-                    tf_serialization.deserialize_message(&extracted_serialized_msg, msg.get());
-                    if (!msg->transforms.empty()) {
-                        message_buffer.push_back({get_time_sec(msg->transforms[0].header.stamp), nullptr, nullptr, msg, serialized_msg->topic_name});
-                    }
-                }
-            }
-
-            std::stable_sort(message_buffer.begin(), message_buffer.end());
-
-            double process_until_time = message_buffer.back().timestamp - (bag_buffer_time_sec_ / 2.0);
-            if (!reader.has_next()) {
-                process_until_time = std::numeric_limits<double>::max();
-            }
-
-            while (!message_buffer.empty() && message_buffer.front().timestamp < process_until_time) {
-                StampedMessage stamped_msg = message_buffer.front();
-                message_buffer.pop_front();
-
-                rosgraph_msgs::msg::Clock clock_msg;
-                clock_msg.clock = get_ros_time(stamped_msg.timestamp);
-                clock_pub_->publish(clock_msg);
-
-                { // Push to buffers
-                    std::lock_guard<std::mutex> lock(fast_lio_core_->mtx_buffer_);
-                    if (stamped_msg.topic_name == imu_topic) {
-                        fast_lio_core_->imu_buffer_.push_back(stamped_msg.imu_msg);
-                    } else if (stamped_msg.topic_name == lid_topic) {
-                        fast_lio_core_->lidar_buffer_.push_back(stamped_msg.lidar_msg);
-                        fast_lio_core_->time_buffer_.push_back(stamped_msg.timestamp);
-                    } else if (stamped_msg.topic_name == tf_topic) {
-                        broadcaster_->sendTransform(stamped_msg.tf_msg->transforms);
-                    } else if (stamped_msg.topic_name == tf_static_topic) {
-                        static_tf_broadcaster_->sendTransform(stamped_msg.tf_msg->transforms);
-                    }
-                }
-
-                MeasureGroup meas;
-                if (fast_lio_core_->sync_packages(meas)) {
-                    FrameResult result = fast_lio_core_->process_frame(meas);
-                    if (result.cloud.empty()) continue;
-
-                    nav_msgs::msg::Odometry odom_msg;
-                    geometry_msgs::msg::Quaternion quat;
-                    fast_lio_core_->get_publish_odometry(odom_msg, quat);
-                    odom_msg.header.stamp = get_ros_time(fast_lio_core_->get_lidar_end_time());
-                    odom_msg.header.frame_id = map_frame_;
-
-                    Eigen::Matrix4d pose_world = Eigen::Matrix4d::Identity();
-                    pose_world.block<3, 3>(0, 0) = Eigen::Quaterniond(odom_msg.pose.pose.orientation.w, odom_msg.pose.pose.orientation.x, odom_msg.pose.pose.orientation.y, odom_msg.pose.pose.orientation.z).toRotationMatrix();
-                    pose_world(0, 3) = odom_msg.pose.pose.position.x;
-                    pose_world(1, 3) = odom_msg.pose.pose.position.y;
-                    pose_world(2, 3) = odom_msg.pose.pose.position.z;
-
-                    pcl::PointCloud<pcl::PointXYZI>::Ptr cloud_world(new pcl::PointCloud<pcl::PointXYZI>());
-                    pcl::transformPointCloud(result.cloud, *cloud_world, pose_world);
-
-                    sensor_msgs::msg::PointCloud2 pcd_msg;
-                    pcl::toROSMsg(*cloud_world, pcd_msg);
-                    pcd_msg.header.stamp = odom_msg.header.stamp;
-                    pcd_msg.header.frame_id = "body";
-
-                    odomPcdCallback(std::make_shared<nav_msgs::msg::Odometry>(odom_msg),
-                                    std::make_shared<sensor_msgs::msg::PointCloud2>(pcd_msg));
-
-                    nav_msgs::msg::Path live_corrected_path;
-                    live_corrected_path.header.frame_id = map_frame_;
-                    live_corrected_path.header.stamp = odom_msg.header.stamp;
-                    std::lock_guard<std::mutex> lock(keyframes_mutex_);
-                    for(const auto& kf : keyframes_) {
-                        live_corrected_path.poses.push_back(
-                                poseEigToPoseStamped(kf.pose_corrected_eig_, map_frame_)
-                                );
-                    }
-                    corrected_path_pub_->publish(live_corrected_path);
-
-                    if (corrected_pcd_map_pub_->get_subscription_count() > 0 && !keyframes_.empty())
-                    {
-                        pcl::PointCloud<PointType>::Ptr corrected_map(new pcl::PointCloud<PointType>());
-                        corrected_map->reserve(keyframes_[0].pcd_.size() * keyframes_.size());
-
-                        for (size_t i = 0; i < keyframes_.size(); ++i)
-                        {
-                            *corrected_map += transformPcd(keyframes_[i].pcd_, keyframes_[i].pose_corrected_eig_);
-                        }
-
-                        const auto &voxelized_map = voxelizePcd(corrected_map, voxel_res_);
-                        corrected_pcd_map_pub_->publish(pclToPclRos(*voxelized_map, map_frame_));
-                    }
-                    rate.sleep();
-                }
-            }
+    RCLCPP_INFO(this->get_logger(), "Reading initial messages for IMU initialization...");
+    deque<sensor_msgs::msg::Imu::ConstSharedPtr> init_imu_data;
+    while (reader.has_next() && init_imu_data.size() < INIT_IMU_COUNT) {
+        auto serialized_msg = reader.read_next();
+        if (serialized_msg->topic_name == imu_topic) {
+            auto msg = std::make_shared<sensor_msgs::msg::Imu>();
+            rclcpp::SerializedMessage extracted_serialized_msg(*serialized_msg->serialized_data);
+            imu_serialization.deserialize_message(&extracted_serialized_msg, msg.get());
+            init_imu_data.push_back(msg);
         }
     }
-    else // Full bag read mode
+
+    if (init_imu_data.size() < INIT_IMU_COUNT) {
+        RCLCPP_ERROR(this->get_logger(), "Not enough IMU messages in bag to initialize. Found %zu, need %d.", init_imu_data.size(), INIT_IMU_COUNT);
+        return;
+    }
+
     {
-        RCLCPP_INFO(this->get_logger(), "Offline mode with FULL BAG reading.");
-        // Main processing loop
-        std::vector<StampedMessage> all_messages;
-        RCLCPP_INFO(this->get_logger(), "Reading all messages from bag...");
-        while(reader.has_next())
-        {
+        std::lock_guard<std::mutex> lock(fast_lio_core_->mtx_buffer_);
+        fast_lio_core_->imu_buffer_ = init_imu_data;
+    }
+    fast_lio_core_->initial_setup();
+    RCLCPP_INFO(this->get_logger(), "IMU Initialized.");
+
+    reader.seek(0);
+    std::deque<StampedMessage> message_buffer;
+
+    struct AuxMessage {
+        double timestamp;
+        std_msgs::msg::Float64 msg;
+        std::string topic;
+        bool operator<(const AuxMessage& other) const {
+            return timestamp < other.timestamp;
+        }
+    };
+    std::deque<AuxMessage> aux_buffer;
+
+    while(reader.has_next() && rclcpp::ok()) {
+        while(reader.has_next()) {
+            if (!message_buffer.empty() && 
+                    (message_buffer.back().timestamp - message_buffer.front().timestamp > bag_buffer_time_sec_)) {
+                break; 
+            }
             auto serialized_msg = reader.read_next();
             rclcpp::SerializedMessage extracted_serialized_msg(*serialized_msg->serialized_data);
 
-            if (serialized_msg->topic_name == imu_topic)
-            {
+            if (serialized_msg->topic_name == imu_topic) {
                 auto msg = std::make_shared<sensor_msgs::msg::Imu>();
                 imu_serialization.deserialize_message(&extracted_serialized_msg, msg.get());
-                all_messages.push_back({get_time_sec(msg->header.stamp), msg, nullptr, nullptr, imu_topic});
-            }
-            else if (serialized_msg->topic_name == lid_topic)
-            {
+                message_buffer.push_back({get_time_sec(msg->header.stamp), msg, nullptr, nullptr, imu_topic});
+            } else if (serialized_msg->topic_name == lid_topic) {
                 PointCloudXYZI::Ptr cloud(new PointCloudXYZI());
                 double header_stamp = 0.0;
                 if (fast_lio_config_struct_.lidar_type == AVIA) {
@@ -663,59 +548,59 @@ void FastLioSamScQn::runOffline()
                     header_stamp = get_time_sec(pc2_msg->header.stamp);
                     fast_lio_core_->p_pre_->process(std::move(pc2_msg), cloud);
                 }
-                all_messages.push_back({header_stamp, nullptr, cloud, nullptr, lid_topic});
+                message_buffer.push_back({header_stamp, nullptr, cloud, nullptr, lid_topic});
             } else if (serialized_msg->topic_name == tf_topic || serialized_msg->topic_name == tf_static_topic) {
                 auto msg = std::make_shared<tf2_msgs::msg::TFMessage>();
                 tf_serialization.deserialize_message(&extracted_serialized_msg, msg.get());
                 if (!msg->transforms.empty()) {
-                    all_messages.push_back({get_time_sec(msg->transforms[0].header.stamp), nullptr, nullptr, msg, serialized_msg->topic_name});
+                    message_buffer.push_back({get_time_sec(msg->transforms[0].header.stamp), nullptr, nullptr, msg, serialized_msg->topic_name});
                 }
             }
-        }
-        RCLCPP_INFO(this->get_logger(), "Read %zu total messages. Sorting...", all_messages.size());
-        std::sort(all_messages.begin(), all_messages.end());
-        RCLCPP_INFO(this->get_logger(), "Finished sorting messages. Starting processing loop.");
-
-        // IMU Initialization
-        deque<sensor_msgs::msg::Imu::ConstSharedPtr> init_imu_data;
-        for (const auto& msg : all_messages) {
-            if (msg.topic_name == imu_topic) {
-                init_imu_data.push_back(msg.imu_msg);
-                if (init_imu_data.size() >= INIT_IMU_COUNT) break;
+            else if (serialized_msg->topic_name == lat_topic || serialized_msg->topic_name == lon_topic) {
+                std_msgs::msg::Float64 msg;
+                double_serialization.deserialize_message(&extracted_serialized_msg, &msg);
+                double t = (double)serialized_msg->recv_timestamp * 1e-9;
+                aux_buffer.push_back({t, msg, serialized_msg->topic_name});
             }
         }
 
-        if (init_imu_data.size() < INIT_IMU_COUNT) {
-            RCLCPP_ERROR(this->get_logger(), "Not enough IMU messages for initialization!");
-            return;
+        std::stable_sort(message_buffer.begin(), message_buffer.end());
+        std::stable_sort(aux_buffer.begin(), aux_buffer.end());
+
+        double process_until_time = message_buffer.back().timestamp - (bag_buffer_time_sec_ / 2.0);
+        if (!reader.has_next()) {
+            process_until_time = std::numeric_limits<double>::max();
         }
 
-        {
-            std::lock_guard<std::mutex> lock(fast_lio_core_->mtx_buffer_);
-            fast_lio_core_->imu_buffer_ = init_imu_data;
-        }
-        fast_lio_core_->initial_setup();
-        RCLCPP_INFO(this->get_logger(), "IMU Initialized.");
+        while (!message_buffer.empty() && message_buffer.front().timestamp < process_until_time) {
+            StampedMessage stamped_msg = message_buffer.front();
+            message_buffer.pop_front();
 
-        // Main Processing Loop
-        for (const auto& msg : all_messages) {
-            if (!rclcpp::ok()) break;
-            {
+            // [Added] Publish aux messages up to the current simulation time
+            while(!aux_buffer.empty() && aux_buffer.front().timestamp <= stamped_msg.timestamp) {
+                if (aux_buffer.front().topic == lat_topic) {
+                    pub_ext_lat_->publish(aux_buffer.front().msg);
+                } else {
+                    pub_ext_lon_->publish(aux_buffer.front().msg);
+                }
+                aux_buffer.pop_front();
+            }
+
+            rosgraph_msgs::msg::Clock clock_msg;
+            clock_msg.clock = get_ros_time(stamped_msg.timestamp);
+            clock_pub_->publish(clock_msg);
+
+            { // Push to buffers
                 std::lock_guard<std::mutex> lock(fast_lio_core_->mtx_buffer_);
-
-                rosgraph_msgs::msg::Clock clock_msg;
-                clock_msg.clock = get_ros_time(msg.timestamp);
-                clock_pub_->publish(clock_msg);
-
-                if (msg.topic_name == imu_topic) {
-                    fast_lio_core_->imu_buffer_.push_back(msg.imu_msg);
-                } else if (msg.topic_name == lid_topic) {
-                    fast_lio_core_->lidar_buffer_.push_back(msg.lidar_msg);
-                    fast_lio_core_->time_buffer_.push_back(msg.timestamp);
-                } else if (msg.topic_name == tf_topic) {
-                    broadcaster_->sendTransform(msg.tf_msg->transforms);
-                } else if (msg.topic_name == tf_static_topic) {
-                    static_tf_broadcaster_->sendTransform(msg.tf_msg->transforms);
+                if (stamped_msg.topic_name == imu_topic) {
+                    fast_lio_core_->imu_buffer_.push_back(stamped_msg.imu_msg);
+                } else if (stamped_msg.topic_name == lid_topic) {
+                    fast_lio_core_->lidar_buffer_.push_back(stamped_msg.lidar_msg);
+                    fast_lio_core_->time_buffer_.push_back(stamped_msg.timestamp);
+                } else if (stamped_msg.topic_name == tf_topic) {
+                    broadcaster_->sendTransform(stamped_msg.tf_msg->transforms);
+                } else if (stamped_msg.topic_name == tf_static_topic) {
+                    static_tf_broadcaster_->sendTransform(stamped_msg.tf_msg->transforms);
                 }
             }
 
@@ -750,15 +635,13 @@ void FastLioSamScQn::runOffline()
                 nav_msgs::msg::Path live_corrected_path;
                 live_corrected_path.header.frame_id = map_frame_;
                 live_corrected_path.header.stamp = odom_msg.header.stamp;
-                {
-                    std::lock_guard<std::mutex> lock(keyframes_mutex_);
-                    for(const auto& kf : keyframes_) {
-                        live_corrected_path.poses.push_back(
-                                poseEigToPoseStamped(kf.pose_corrected_eig_, map_frame_)
-                                );
-                    }
-                    corrected_path_pub_->publish(live_corrected_path);
+                std::lock_guard<std::mutex> lock(keyframes_mutex_);
+                for(const auto& kf : keyframes_) {
+                    live_corrected_path.poses.push_back(
+                            poseEigToPoseStamped(kf.pose_corrected_eig_, map_frame_)
+                            );
                 }
+                corrected_path_pub_->publish(live_corrected_path);
 
                 if (corrected_pcd_map_pub_->get_subscription_count() > 0 && !keyframes_.empty())
                 {
@@ -835,7 +718,8 @@ void FastLioSamScQn::runOffline()
     visTimerFunc(); // final visualization call
 
     RCLCPP_INFO(this->get_logger(), "Offline processing finished. Final results are now available.");
-    rclcpp::shutdown();
+    this->trigger_transition(lifecycle_msgs::msg::Transition::TRANSITION_DEACTIVATE);
+    this->trigger_transition(lifecycle_msgs::msg::Transition::TRANSITION_INACTIVE_SHUTDOWN);
 }
 
 void FastLioSamScQn::imuCallback(const sensor_msgs::msg::Imu::ConstSharedPtr msg)

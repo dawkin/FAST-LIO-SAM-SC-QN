@@ -38,6 +38,7 @@
 #include <tf2_ros/transform_listener.h>
 #include <tf2_ros/static_transform_broadcaster.h>
 #include <std_msgs/msg/string.hpp>
+#include <std_msgs/msg/float64.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <visualization_msgs/msg/marker.hpp>
 #include <message_filters/subscriber.h>
@@ -135,6 +136,8 @@ private:
     rclcpp::Publisher<PointCloudT>::SharedPtr debug_coarse_aligned_pub_;
     rclcpp::Publisher<PointCloudT>::SharedPtr debug_fine_aligned_pub_;
     rclcpp::Publisher<rosgraph_msgs::msg::Clock>::SharedPtr clock_pub_;
+    rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr pub_ext_lat_;
+    rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr pub_ext_lon_;
 
     rclcpp::Subscription<StringT>::SharedPtr sub_save_flag_;
 
@@ -160,7 +163,6 @@ private:
     ///// Offline Mode
     std::string bag_file_;
     bool offline_post_loop_optimization_ = false;
-    bool offline_buffered_read_ = true;
     double bag_buffer_time_sec_ = 2.0;
 
 public:

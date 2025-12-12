@@ -60,5 +60,4 @@ fast_lio_sam_sc_qn_node:
       bag_file: ""
       fast_lio_config: "mid360.yaml"
       post_loop_optimization: false
-      buffered_read: true
       buffer_time_sec: 2.0
