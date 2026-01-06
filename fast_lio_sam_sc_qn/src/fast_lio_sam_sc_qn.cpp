@@ -97,8 +97,8 @@ void FastLioSamScQn::initPublishersAndSubscribers()
       "/clock",
       rclcpp::QoS(rclcpp::KeepLast(10)).best_effort().durability_volatile());
 
-  pub_ext_lat_ = this->create_publisher<std_msgs::msg::Float64>("/ext/lat", 10);
-  pub_ext_lon_ = this->create_publisher<std_msgs::msg::Float64>("/ext/lon", 10);
+  pub_ext_lat_ = this->create_publisher<std_msgs::msg::Float64>("/ext/rlat", 10);
+  pub_ext_lon_ = this->create_publisher<std_msgs::msg::Float64>("/ext/rlon", 10);
 }
 
 LifecycleNodeInterface::CallbackReturn FastLioSamScQn::on_configure(const rclcpp_lifecycle::State&)
@@ -469,8 +469,8 @@ void FastLioSamScQn::runOffline()
     std::string imu_topic = fast_lio_imu_topic_;
     std::string tf_topic = "/tf";
     std::string tf_static_topic = "/tf_static";
-    std::string lat_topic = "/ext/lat";
-    std::string lon_topic = "/ext/lon";
+    std::string lat_topic = "/ext/rlat";
+    std::string lon_topic = "/ext/rlon";
 
     rosbag2_storage::StorageFilter filter;
     filter.topics = {lid_topic, imu_topic, tf_topic, tf_static_topic, lat_topic, lon_topic};
