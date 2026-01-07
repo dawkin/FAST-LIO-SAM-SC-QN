@@ -16,6 +16,8 @@ FastLioSamScQn::FastLioSamScQn(): rclcpp_lifecycle::LifecycleNode("FastLioSamScQ
     this->declare_parameter("basic.loop_update_hz", 2.0);
     this->declare_parameter("basic.vis_hz", 1.0);
     this->declare_parameter("basic.use_gravity_alignment", use_gravity_alignment_);
+    this->declare_parameter("basic.latitude_topic", "/ext/rlat");
+    this->declare_parameter("basic.longitude_topic", "/ext/rlon");
     this->declare_parameter("save_voxel_resolution", voxel_res_);
     this->declare_parameter("quatro_nano_gicp_voxel_resolution",lc_config.voxel_res_);
     /* keyframe */
@@ -97,8 +99,8 @@ void FastLioSamScQn::initPublishersAndSubscribers()
       "/clock",
       rclcpp::QoS(rclcpp::KeepLast(10)).best_effort().durability_volatile());
 
-  pub_ext_lat_ = this->create_publisher<std_msgs::msg::Float64>("/ext/rlat", 10);
-  pub_ext_lon_ = this->create_publisher<std_msgs::msg::Float64>("/ext/rlon", 10);
+  pub_ext_lat_ = this->create_publisher<std_msgs::msg::Float64>(latitude_topic_, 10);
+  pub_ext_lon_ = this->create_publisher<std_msgs::msg::Float64>(longitude_topic_, 10);
 }
 
 LifecycleNodeInterface::CallbackReturn FastLioSamScQn::on_configure(const rclcpp_lifecycle::State&)
@@ -116,6 +118,8 @@ LifecycleNodeInterface::CallbackReturn FastLioSamScQn::on_configure(const rclcpp
     this->get_parameter("basic.loop_update_hz", loop_update_hz);
     this->get_parameter("basic.vis_hz", vis_hz);
     this->get_parameter("basic.use_gravity_alignment", use_gravity_alignment_);
+    this->get_parameter("basic.latitude_topic", latitude_topic_);
+    this->get_parameter("basic.longitude_topic", longitude_topic_);
     this->get_parameter("save_voxel_resolution", voxel_res_);
     this->get_parameter("quatro_nano_gicp_voxel_resolution", lc_config.voxel_res_);
     /* keyframe */
@@ -469,8 +473,8 @@ void FastLioSamScQn::runOffline()
     std::string imu_topic = fast_lio_imu_topic_;
     std::string tf_topic = "/tf";
     std::string tf_static_topic = "/tf_static";
-    std::string lat_topic = "/ext/rlat";
-    std::string lon_topic = "/ext/rlon";
+    std::string lat_topic = latitude_topic_;
+    std::string lon_topic = longitude_topic_;
 
     rosbag2_storage::StorageFilter filter;
     filter.topics = {lid_topic, imu_topic, tf_topic, tf_static_topic, lat_topic, lon_topic};
